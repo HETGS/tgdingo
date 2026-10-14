@@ -12,13 +12,15 @@ def _search_results(query: str):
     if not query:
         return []
 
+    query = query.strip()
+    results = []
+
     try:
         objects = (
             Source.objects.filter(source_name__icontains=query)
             | Source.objects.filter(simbad_ID__icontains=query)
             | Source.objects.filter(ned_ID__icontains=query)
         )[:10]
-        results = []
         for source in objects:
             obs = (
                 Observation.objects.filter(srcid=source.srcid)
@@ -42,9 +44,55 @@ def _search_results(query: str):
                     ),
                 }
             )
-        return results
     except Exception:
-        return []
+        pass
+
+    if query.isdigit():
+        try:
+            observation = (
+                Observation.objects.filter(obsid=int(query))
+                .filter(reject="N")
+                .order_by("id")
+                .first()
+            )
+            if observation is not None:
+                source = None
+                if observation.srcid is not None:
+                    try:
+                        source = Source.objects.filter(srcid=observation.srcid).first()
+                    except Exception:
+                        source = None
+                target_name = (
+                    observation.target
+                    or getattr(source, "source_name", None)
+                    or getattr(source, "simbad_ID", None)
+                    or getattr(source, "ned_ID", None)
+                    or str(observation.obsid)
+                )
+                results.append(
+                    {
+                        "object_name": target_name,
+                        "observation_id": observation.obsid,
+                        "instrument": getattr(observation, "instrument", "N/A"),
+                        "summary": f"Observation {observation.obsid} matches the requested observation ID.",
+                    }
+                )
+        except Exception:
+            pass
+
+    seen = set()
+    deduplicated = []
+    for result in results:
+        key = (
+            result.get("object_name"),
+            result.get("observation_id"),
+            result.get("instrument"),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduplicated.append(result)
+    return deduplicated
 
 
 def home(request):

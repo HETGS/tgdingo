@@ -34,7 +34,7 @@
                 <dt>Observation</dt>
                 <dd>
                   {% if result.observation_id and result.observation_id != "N/A" %}
-                    {{ result.observation_id }}
+                    <a href="{% url 'catalog:observation_detail' result.observation_id %}">{{ result.observation_id }}</a>
                   {% else %}
                     Unavailable
                   {% endif %}

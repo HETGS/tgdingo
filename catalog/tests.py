@@ -17,6 +17,30 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "Find targets and observations")
         self.assertContains(response, "Showing matches for")
 
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_search_finds_observation_by_obsid(
+        self, mock_obs_filter, mock_source_filter
+    ):
+        observation = SimpleNamespace(
+            obsid=873,
+            target="CAPELLA",
+            srcid=1944,
+            instrument="ACIS",
+        )
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
+        mock_source_filter.return_value.first.return_value = SimpleNamespace(
+            source_name="CAPELLA",
+            simbad_ID="Capella",
+        )
+
+        response = self.client.get(reverse("catalog:search") + "?q=873")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "CAPELLA")
+        self.assertContains(response, "873")
+        self.assertContains(response, "View observation")
+
     @patch("catalog.views.FileRecord.objects.filter")
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
