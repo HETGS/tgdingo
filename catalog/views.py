@@ -37,6 +37,7 @@ def _search_results(query: str):
                     or str(source.srcid),
                     "observation_id": observation_id,
                     "instrument": obs.instrument if obs else "N/A",
+                    "source_id": getattr(source, "srcid", None),
                     "summary": (
                         f"Catalog entry for {source.source_name or source.simbad_ID or source.ned_ID}."
                         if source.source_name or source.simbad_ID or source.ned_ID
@@ -49,13 +50,13 @@ def _search_results(query: str):
 
     if query.isdigit():
         try:
-            observation = (
+            matching_observations = list(
                 Observation.objects.filter(obsid=int(query))
                 .filter(reject="N")
                 .order_by("id")
-                .first()
+                .all()
             )
-            if observation is not None:
+            for observation in matching_observations:
                 source = None
                 if observation.srcid is not None:
                     try:
@@ -63,10 +64,10 @@ def _search_results(query: str):
                     except Exception:
                         source = None
                 target_name = (
-                    observation.target
-                    or getattr(source, "source_name", None)
+                    getattr(source, "source_name", None)
                     or getattr(source, "simbad_ID", None)
                     or getattr(source, "ned_ID", None)
+                    or observation.target
                     or str(observation.obsid)
                 )
                 results.append(
@@ -74,6 +75,7 @@ def _search_results(query: str):
                         "object_name": target_name,
                         "observation_id": observation.obsid,
                         "instrument": getattr(observation, "instrument", "N/A"),
+                        "source_id": getattr(observation, "srcid", None),
                         "summary": f"Observation {observation.obsid} matches the requested observation ID.",
                     }
                 )
@@ -87,6 +89,7 @@ def _search_results(query: str):
             result.get("object_name"),
             result.get("observation_id"),
             result.get("instrument"),
+            result.get("source_id"),
         )
         if key in seen:
             continue
@@ -158,9 +161,10 @@ def observation_detail(request, obsid):
         ]
 
     source_label = (
-        observation.target
+        getattr(source, "source_name", None)
         or getattr(source, "simbad_ID", None)
-        or getattr(source, "source_name", None)
+        or getattr(source, "ned_ID", None)
+        or observation.target
         or "Unknown target"
     )
     source_url = None

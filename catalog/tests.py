@@ -28,7 +28,9 @@ class CatalogSmokeTests(TestCase):
             srcid=1944,
             instrument="ACIS",
         )
-        mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            observation
+        ]
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
             source_name="CAPELLA",
             simbad_ID="Capella",
@@ -156,6 +158,89 @@ class CatalogSmokeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         observation_queryset.filter.assert_any_call(reject="N")
         self.assertContains(response, "TW Hya")
+
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_search_returns_all_matching_obsid_rows(
+        self, mock_obs_filter, mock_source_filter
+    ):
+        first_obs = SimpleNamespace(
+            obsid=3,
+            target="TRAPEZIUM",
+            srcid=2959,
+            instrument="ACIS",
+        )
+        second_obs = SimpleNamespace(
+            obsid=3,
+            target="TRAPEZIUM",
+            srcid=1618,
+            instrument="ACIS",
+        )
+        third_obs = SimpleNamespace(
+            obsid=3,
+            target="TRAPEZIUM",
+            srcid=2972,
+            instrument="ACIS",
+        )
+        fourth_obs = SimpleNamespace(
+            obsid=3,
+            target="TRAPEZIUM",
+            srcid=2970,
+            instrument="ACIS",
+        )
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            first_obs,
+            second_obs,
+            third_obs,
+            fourth_obs,
+        ]
+        mock_source_filter.return_value.first.return_value = SimpleNamespace(
+            source_name="TRAPEZIUM"
+        )
+
+        response = self.client.get(reverse("catalog:search") + "?q=3")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.content.decode("utf-8").count(
+                "Observation 3 matches the requested observation ID."
+            ),
+            4,
+        )
+        self.assertContains(response, "3")
+
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_search_uses_source_target_name_for_obsid_matches(
+        self, mock_obs_filter, mock_source_filter
+    ):
+        first_obs = SimpleNamespace(
+            obsid=7,
+            target="GENERIC TARGET",
+            srcid=1,
+            instrument="ACIS",
+        )
+        second_obs = SimpleNamespace(
+            obsid=7,
+            target="GENERIC TARGET",
+            srcid=2,
+            instrument="ACIS",
+        )
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            first_obs,
+            second_obs,
+        ]
+        mock_source_filter.return_value.first.side_effect = [
+            SimpleNamespace(source_name="NGC 1234"),
+            SimpleNamespace(source_name="NGC 5678"),
+        ]
+
+        response = self.client.get(reverse("catalog:search") + "?q=7")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "NGC 1234")
+        self.assertContains(response, "NGC 5678")
+        self.assertNotContains(response, "GENERIC TARGET")
 
     @patch("catalog.views._search_results")
     def test_search_page_handles_missing_observation_id(self, mock_search_results):
