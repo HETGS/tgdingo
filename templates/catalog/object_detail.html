@@ -1,0 +1,46 @@
+{% extends 'catalog/base.html' %}
+
+{% block title %}{{ object_name }} | TGCat{% endblock %}
+
+{% block content %}
+  <section class="detail-header panel">
+    <div>
+      <p class="eyebrow">Target overview</p>
+      <h1>{{ object_name }}</h1>
+    </div>
+    <div class="header-actions">
+      <a class="secondary-button" href="{% url 'catalog:search' %}">Back to search</a>
+    </div>
+  </section>
+
+  <section class="product-overview panel">
+    <div>
+      <p class="section-label">Available products</p>
+      <h2>Data products for this target</h2>
+    </div>
+    <p class="muted-note">This listing shows the downloadable TGCat files associated with the selected target.</p>
+  </section>
+
+  {% if products %}
+    <div class="product-list">
+      {% for product in products %}
+        <article class="product-card">
+          <div class="card-topline">
+            <span class="badge {% if product.product_type == 'spectrum' %}badge-indigo{% else %}badge-amber{% endif %}">{{ product.product_type|title }}</span>
+            <span class="badge badge-slate">{{ product.format }}</span>
+          </div>
+          <h3>{{ product.name }}</h3>
+          <p>{{ product.description }}</p>
+          <div class="product-actions">
+            <a class="link-button" href="{% url 'catalog:download' product.name %}">Download</a>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state panel">
+      <h2>No data products</h2>
+      <p class="muted-note">No data products are currently available for this target.</p>
+    </div>
+  {% endif %}
+{% endblock %}

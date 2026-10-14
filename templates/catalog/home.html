@@ -1,0 +1,17 @@
+{% extends 'catalog/base.html' %}
+
+{% block title %}TGCat Home{% endblock %}
+
+{% block content %}
+  <section class="hero">
+    <h1>Transmission Grating Catalog</h1>
+    <p class="muted-note">
+      Search for spectra, light curves, and data products from the TGCat database.
+    </p>
+
+    <form class="search-form" method="get" action="{% url 'catalog:search' %}">
+      <input type="text" name="q" value="" placeholder="Search by object name, coordinates, or observation ID" />
+      <button type="submit">Search</button>
+    </form>
+  </section>
+{% endblock %}

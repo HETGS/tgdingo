@@ -1,0 +1,54 @@
+{% extends 'catalog/base.html' %}
+
+{% block title %}TGCat Search{% endblock %}
+
+{% block content %}
+  <section class="page-hero panel">
+    <div>
+      <p class="eyebrow">Catalog search</p>
+      <h1>Find targets and observations</h1>
+    </div>
+
+    <form class="search-form" method="get" action="{% url 'catalog:search' %}">
+      <input type="text" name="q" value="{{ query }}" placeholder="Search by object name, observation ID, or catalog term" />
+      <button type="submit">Search</button>
+    </form>
+
+    {% if query %}
+      <p class="muted-note search-summary">Showing matches for <strong>{{ query }}</strong></p>
+    {% endif %}
+  </section>
+
+  <section class="results-panel">
+    {% if results %}
+      <div class="result-grid">
+        {% for result in results %}
+          <article class="result-card">
+            <div class="card-topline">
+              <span class="badge badge-blue">Target</span>
+              <span class="badge badge-slate">{{ result.instrument|default:"Unknown" }}</span>
+            </div>
+            <h3>{{ result.object_name }}</h3>
+            <dl class="meta-list">
+              <div>
+                <dt>Observation</dt>
+                <dd>{{ result.observation_id }}</dd>
+              </div>
+              <div>
+                <dt>Instrument</dt>
+                <dd>{{ result.instrument }}</dd>
+              </div>
+            </dl>
+            <p>{{ result.summary }}</p>
+            <a class="link-button" href="{% url 'catalog:object_detail' result.object_name %}">View products</a>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state panel">
+        <h2>No matching catalog entries</h2>
+        <p class="muted-note">No matching catalog entries were found for the current search.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

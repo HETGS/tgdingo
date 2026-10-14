@@ -1,0 +1,25 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}TGCat{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'catalog.css' %}" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="container site-header-inner">
+        <a href="{% url 'catalog:home' %}" class="brand">TGCat</a>
+        <nav>
+          <a href="{% url 'catalog:home' %}">Home</a>
+          <a href="{% url 'catalog:search' %}">Search</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="container page-content">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
