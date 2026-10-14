@@ -1,0 +1,109 @@
+{% extends 'catalog/base.html' %}
+
+{% block title %}Observation {{ observation.obsid }} | TGCat{% endblock %}
+
+{% block content %}
+  <section class="detail-header panel">
+    <div>
+      <p class="eyebrow">Observation overview</p>
+      <h1>Observation {{ observation.obsid }}</h1>
+    </div>
+    <div class="header-actions">
+      <a class="secondary-button" href="{% url 'catalog:search' %}">Back to search</a>
+    </div>
+  </section>
+
+  <section class="panel">
+    <dl class="meta-list">
+      <div>
+        <dt>Observation ID</dt>
+        <dd>
+          <a href="https://cda.harvard.edu/chaser/startViewer.action?obsid={{ observation.obsid }}" target="_blank" rel="noreferrer">
+            {{ observation.obsid }}
+          </a>
+        </dd>
+      </div>
+      <div>
+        <dt>Target</dt>
+        <dd>
+          {% if source_url %}
+            <a href="{{ source_url }}" target="_blank" rel="noopener noreferrer">{{ target_name }}</a>
+          {% else %}
+            {{ target_name }}
+          {% endif %}
+        </dd>
+      </div>
+      <div>
+        <dt>Coordinates</dt>
+        <dd>{{ coordinates.ra|default:"-" }}, {{ coordinates.decl|default:"-" }}</dd>
+      </div>
+      <div>
+        <dt>Grating</dt>
+        <dd>{{ observation.grating|default:"Unknown" }}</dd>
+      </div>
+      <div>
+        <dt>Instrument</dt>
+        <dd>{{ observation.instrument|default:"Unknown" }}</dd>
+      </div>
+      <div>
+        <dt>Exposure time</dt>
+        <dd>{{ observation.exposure|default:"Unknown" }} s</dd>
+      </div>
+      <div>
+        <dt>Date</dt>
+        <dd>{{ observation_date_iso }}</dd>
+      </div>
+      <div>
+        <dt>Read mode</dt>
+        <dd>{{ observation.readmode|default:"Unknown" }}</dd>
+      </div>
+      <div>
+        <dt>Data mode</dt>
+        <dd>{{ observation.datamode|default:"Unknown" }}</dd>
+      </div>
+      <div>
+        <dt>Events</dt>
+        <dd>{{ observation.events|default:"Unknown" }}</dd>
+      </div>
+    </dl>
+  </section>
+
+  {% if notes_text %}
+    <section class="panel">
+      <p class="section-label">Notes</p>
+      <h2>Observation notes</h2>
+      <p class="notes-text">{{ notes_text|linebreaksbr }}</p>
+    </section>
+  {% endif %}
+
+  <section class="product-overview panel">
+    <div>
+      <p class="section-label">Associated products</p>
+      <h2>Files linked to this observation</h2>
+    </div>
+  </section>
+
+  {% if products %}
+    <div class="product-list">
+      {% for product in products %}
+        <article class="product-card">
+          <div class="card-topline">
+            <span class="badge badge-indigo">{{ product.type|upper }}</span>
+          </div>
+          <h3>{{ product.name }}</h3>
+          {% if product.size %}
+            <p>{{ product.size }} bytes</p>
+          {% endif %}
+          <div class="product-actions">
+            <a class="link-button" href="{% url 'catalog:download' product.name %}">Download</a>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state panel">
+      <h2>No files listed</h2>
+      <p class="muted-note">No associated files were found for this observation.</p>
+    </div>
+  {% endif %}
+{% endblock %}

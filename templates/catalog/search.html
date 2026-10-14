@@ -32,7 +32,13 @@
             <dl class="meta-list">
               <div>
                 <dt>Observation</dt>
-                <dd>{{ result.observation_id }}</dd>
+                <dd>
+                  {% if result.observation_id and result.observation_id != "N/A" %}
+                    {{ result.observation_id }}
+                  {% else %}
+                    Unavailable
+                  {% endif %}
+                </dd>
               </div>
               <div>
                 <dt>Instrument</dt>
@@ -40,7 +46,12 @@
               </div>
             </dl>
             <p>{{ result.summary }}</p>
-            <a class="link-button" href="{% url 'catalog:object_detail' result.object_name %}">View products</a>
+            <div class="card-actions">
+              {% if result.observation_id and result.observation_id != "N/A" %}
+                <a class="link-button" href="{% url 'catalog:observation_detail' result.observation_id %}">View observation</a>
+              {% endif %}
+              <a class="link-button secondary-link" href="{% url 'catalog:object_detail' result.object_name %}">Target products</a>
+            </div>
           </article>
         {% endfor %}
       </div>

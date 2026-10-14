@@ -1,0 +1,67 @@
+digraph TGCatSchema {
+    rankdir=LR;
+    node [shape=record, fontname="Helvetica"];
+
+    source [label="{source|srcid
+object
+simbad_ID
+ned_ID
+ra
+decl
+pType
+...}"];
+    obsid [label="{obsid|id
+qid
+grpid
+srcid
+obsid
+obi
+target
+pi
+instrument
+...
+exposure}"];
+    files [label="{files|id
+type
+name
+arc
+value
+size
+checksum}"];
+    src2type [label="{src2type|srcid
+typeid}"];
+    type [label="{type|typeid
+type
+category
+origin
+description}"];
+    image [label="{image|img_id
+title
+file_sfx
+priority
+detector
+grating
+description}"];
+    news [label="{news|newsid
+post_date
+poster
+content
+priority}"];
+    spec_prop [label="{spec_prop|id
+label
+wmid
+wlo
+whi
+count_rate
+...}"];
+
+    source -> obsid [label="srcid"];
+    source -> src2type [label="srcid"];
+    src2type -> type [label="typeid"];
+    obsid -> files [label="id = files.id
+(implicit association)"];
+    obsid -> spec_prop [label="id = spec_prop.id
+(implicit association)"];
+    image -> obsid [style=invis];
+    news -> obsid [style=invis];
+}

@@ -1,10 +1,11 @@
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from django.conf import settings
 from django.http import FileResponse, Http404
 from django.shortcuts import render
 
-from .models import Observation, Source
+from .models import FileRecord, Observation, Source
 
 
 def _search_results(query: str):
@@ -19,13 +20,26 @@ def _search_results(query: str):
         )[:10]
         results = []
         for source in objects:
-            obs = Observation.objects.filter(srcid=source.srcid).order_by("obsid").first()
+            obs = (
+                Observation.objects.filter(srcid=source.srcid)
+                .filter(reject="N")
+                .order_by("obsid")
+                .first()
+            )
+            observation_id = obs.obsid if obs and obs.obsid is not None else None
             results.append(
                 {
-                    "object_name": source.source_name or source.simbad_ID or source.ned_ID or str(source.srcid),
-                    "observation_id": obs.obsid if obs else "N/A",
+                    "object_name": source.source_name
+                    or source.simbad_ID
+                    or source.ned_ID
+                    or str(source.srcid),
+                    "observation_id": observation_id,
                     "instrument": obs.instrument if obs else "N/A",
-                    "summary": f"Catalog entry for {source.source_name or source.simbad_ID or source.ned_ID}.",
+                    "summary": (
+                        f"Catalog entry for {source.source_name or source.simbad_ID or source.ned_ID}."
+                        if source.source_name or source.simbad_ID or source.ned_ID
+                        else "Catalog entry for the selected target."
+                    ),
                 }
             )
         return results
@@ -43,6 +57,100 @@ def search(request):
     return render(request, "catalog/search.html", {"query": query, "results": results})
 
 
+def _as_plain_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, (bytes, bytearray)):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def observation_detail(request, obsid):
+    observation = (
+        Observation.objects.filter(obsid=obsid)
+        .filter(reject="N")
+        .order_by("id")
+        .first()
+    )
+    if observation is None:
+        raise Http404("Observation not found.")
+
+    source = None
+    if observation.srcid is not None:
+        try:
+            source = Source.objects.filter(srcid=observation.srcid).first()
+        except Exception:
+            source = None
+
+    files = []
+    try:
+        file_rows = (
+            FileRecord.objects.filter(id=observation.id)
+            .exclude(value__isnull=True)
+            .exclude(value="")
+            .order_by("type", "value")
+        )
+        for row in file_rows:
+            if row.name != "file":
+                continue
+            files.append(
+                {
+                    "name": row.value,
+                    "type": row.type,
+                    "arc": row.arc or "-",
+                    "size": row.size,
+                }
+            )
+    except Exception:
+        files = []
+
+    if not files:
+        files = [
+            {"name": f"product_{obsid}", "type": "unknown", "arc": "-", "size": None}
+        ]
+
+    source_label = (
+        observation.target
+        or getattr(source, "simbad_ID", None)
+        or getattr(source, "source_name", None)
+        or "Unknown target"
+    )
+    source_url = None
+    if source and getattr(source, "simbad_ID", None):
+        if str(source.simbad_ID) != "NO_AUTO_MATCH":
+            source_url = (
+                "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident="
+                + quote_plus(str(source.simbad_ID))
+            )
+
+    observation_date_value = getattr(observation, "date_obs", None)
+    if observation_date_value is None:
+        observation_date_iso = "Unknown"
+    elif hasattr(observation_date_value, "strftime"):
+        observation_date_iso = observation_date_value.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        observation_date_iso = str(observation_date_value)
+
+    context = {
+        "observation": observation,
+        "source": source,
+        "target_name": source_label,
+        "source_url": source_url,
+        "coordinates": {
+            "ra": observation.ra_targ
+            if observation.ra_targ is not None
+            else observation.ra,
+            "decl": observation.dec_targ
+            if observation.dec_targ is not None
+            else observation.decl,
+        },
+        "observation_date_iso": observation_date_iso,
+        "notes_text": _as_plain_text(getattr(observation, "notes", None)),
+        "products": files,
+    }
+    return render(request, "catalog/observation_detail.html", context)
+
+
 def object_detail(request, object_name):
     try:
         source = Source.objects.filter(source_name__iexact=object_name).first()
@@ -55,7 +163,11 @@ def object_detail(request, object_name):
 
     products = []
     if source is not None:
-        observation_ids = list(Observation.objects.filter(srcid=source.srcid).values_list("obsid", flat=True)[:5])
+        observation_ids = list(
+            Observation.objects.filter(srcid=source.srcid)
+            .filter(reject="N")
+            .values_list("obsid", flat=True)[:5]
+        )
         for obsid in observation_ids:
             products.extend(
                 [
