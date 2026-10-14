@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from astropy import units as u
+from astropy.coordinates import SkyCoord
 from django.test import TestCase
 from django.urls import reverse
 
@@ -241,6 +243,192 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "NGC 1234")
         self.assertContains(response, "NGC 5678")
         self.assertNotContains(response, "GENERIC TARGET")
+
+    @patch("catalog.views._coordinate_search_results")
+    def test_search_uses_coordinate_search_over_valid_sources(
+        self, mock_coordinate_search_results
+    ):
+        mock_coordinate_search_results.return_value = [
+            {
+                "object_name": "NGC 1234",
+                "observation_id": 101,
+                "instrument": "ACIS",
+                "summary": "Target NGC 1234 is within 0.5° of the searched coordinates.",
+            },
+            {
+                "object_name": "NGC 5678",
+                "observation_id": 102,
+                "instrument": "LETGS",
+                "summary": "Target NGC 5678 is within 0.5° of the searched coordinates.",
+            },
+        ]
+
+        response = self.client.get(
+            reverse("catalog:search") + "?q=165.45593,+-34.70856&radius=0.5"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "NGC 1234")
+        self.assertContains(response, "NGC 5678")
+        self.assertContains(response, "0.5")
+
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_name_search_lists_every_accepted_obsid_for_a_source(
+        self, mock_obs_filter, mock_source_filter
+    ):
+        class FakeSourceQuerySet(list):
+            def __or__(self, other):
+                return FakeSourceQuerySet(list(self) + list(other))
+
+        source = SimpleNamespace(
+            srcid=42,
+            source_name="TW Hya",
+            simbad_ID="TW Hya",
+            ned_ID=None,
+        )
+        mock_source_filter.return_value = FakeSourceQuerySet([source])
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            SimpleNamespace(obsid=101, instrument="ACIS"),
+            SimpleNamespace(obsid=203, instrument="LETGS"),
+            SimpleNamespace(obsid=999, instrument="ACIS"),
+        ]
+
+        response = self.client.get(reverse("catalog:search") + "?q=TW Hydrae")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            {result["observation_id"] for result in response.context["results"]},
+            {101, 203, 999},
+        )
+        self.assertContains(response, "TW Hya")
+
+    @patch("catalog.views._coordinate_search_results")
+    @patch("catalog.views._parse_coordinate")
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_name_search_matches_coordinate_search_for_tw_hydrae(
+        self,
+        mock_obs_filter,
+        mock_source_filter,
+        mock_parse_coordinate,
+        mock_coordinate_search_results,
+    ):
+        class FakeSourceQuerySet(list):
+            def __or__(self, other):
+                return FakeSourceQuerySet(list(self) + list(other))
+
+            def __getitem__(self, item):
+                data = list(self)
+                if isinstance(item, slice):
+                    return FakeSourceQuerySet(data[item])
+                return data[item]
+
+        source_rows = [
+            SimpleNamespace(
+                srcid=1000 + index,
+                source_name="TW Hya",
+                simbad_ID="TW Hya",
+                ned_ID=None,
+            )
+            for index in range(12)
+        ]
+        mock_source_filter.return_value = FakeSourceQuerySet(source_rows)
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            SimpleNamespace(obsid=2000 + index, instrument="ACIS")
+            for index in range(12)
+        ]
+
+        expected_results = [
+            {
+                "object_name": "TW Hya",
+                "observation_id": 2000 + index,
+                "instrument": "ACIS",
+                "source_id": 1000 + index,
+                "summary": "Catalog entry for TW Hya.",
+            }
+            for index in range(12)
+        ]
+        mock_coordinate_search_results.return_value = expected_results
+        mock_parse_coordinate.side_effect = [
+            None,
+            SkyCoord(165.46625, -34.70473, unit=u.deg),
+        ]
+
+        name_response = self.client.get(reverse("catalog:search") + "?q=TW Hydrae")
+        coord_response = self.client.get(
+            reverse("catalog:search") + "?q=11+01+51.9053285064+-34+42+17.033218380"
+        )
+
+        self.assertEqual(name_response.status_code, 200)
+        self.assertEqual(coord_response.status_code, 200)
+
+        name_obsids = {
+            result["observation_id"]
+            for result in name_response.context["results"]
+            if result.get("observation_id") is not None
+        }
+        coord_obsids = {
+            result["observation_id"]
+            for result in coord_response.context["results"]
+            if result.get("observation_id") is not None
+        }
+
+        self.assertGreaterEqual(len(name_obsids), 11)
+        self.assertGreaterEqual(len(coord_obsids), 11)
+        self.assertEqual(name_obsids, coord_obsids)
+
+    @patch("catalog.views._parse_coordinate")
+    @patch("catalog.views.Observation.objects.filter")
+    @patch("catalog.views.Source.objects.filter")
+    def test_coordinate_search_returns_all_obsids_for_same_target(
+        self, mock_source_filter, mock_obs_filter, mock_parse_coordinate
+    ):
+        class FakeQuerySet:
+            def __init__(self, rows):
+                self.rows = rows
+
+            def filter(self, *args, **kwargs):
+                return self
+
+            def exclude(self, *args, **kwargs):
+                return self
+
+            def order_by(self, *args, **kwargs):
+                return self
+
+            def all(self):
+                return self.rows
+
+        mock_parse_coordinate.return_value = SkyCoord(
+            165.46625, -34.70473056, unit=u.deg
+        )
+
+        source = SimpleNamespace(
+            srcid=42,
+            source_name="TW Hya",
+            simbad_ID="TW Hya",
+            ned_ID=None,
+            ra=165.46625,
+            decl=-34.70473056,
+        )
+        mock_source_filter.return_value = FakeQuerySet([source])
+        mock_obs_filter.return_value = FakeQuerySet(
+            [
+                SimpleNamespace(obsid=5, instrument="ACIS"),
+                SimpleNamespace(obsid=6443, instrument="LETGS"),
+                SimpleNamespace(obsid=7435, instrument="ACIS"),
+            ]
+        )
+
+        results = __import__(
+            "catalog.views", fromlist=["_coordinate_search_results"]
+        )._coordinate_search_results("11 01 51.90 -34 42 17.03", radius_deg=1.0)
+
+        self.assertEqual(len(results), 3)
+        self.assertEqual(
+            {result["observation_id"] for result in results}, {5, 6443, 7435}
+        )
 
     @patch("catalog.views._search_results")
     def test_search_page_handles_missing_observation_id(self, mock_search_results):
