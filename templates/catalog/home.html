@@ -50,7 +50,7 @@
                     <td>
                       <input type="checkbox" name="obsids" value="{{ result.tgcat_id|default:result.observation_id }}" />
                     </td>
-                    <td>{{ result.source_name|default:result.object_name }}</td>
+                    <td>{{ result.name }}</td>
                     <td data-order="{{ result.observation_id|default:0 }}">
                       {% if result.observation_id and result.observation_id != "N/A" %}
                         <a href="{% url 'catalog:observation_detail' result.observation_id %}">{{ result.observation_id }}</a>

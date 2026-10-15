@@ -19,32 +19,24 @@ DATA_FILE_ROOT = Path(
     getattr(
         settings,
         "DATA_FILE_ROOT",
-        os.environ.get("TGDINGO_DATA_ROOT", "/Users/guenther/data/tg_test_data"),
+        os.environ.get("TGDINGO_DATA_ROOT", "./data"),
     )
 )
 PREVIEW_IMAGE_ROOT = Path(
     getattr(
         settings,
         "PREVIEW_IMAGE_ROOT",
-        os.environ.get(
-            "TGDINGO_PREVIEW_IMAGE_ROOT", "/Users/guenther/data/tg_test_data/png"
-        ),
+        os.environ.get("TGDINGO_PREVIEW_IMAGE_ROOT", "./data/png"),
     )
 )
-DOWNLOAD_DATA_OPTIONS = [
-    (
-        "ARF, RMF, PHA2",
-        ["arf", "rmf", "pha2"],
-    ),
-    (
-        "PHA Type 1",
-        ["pha1"],
-    ),
-    ("light curves", ["lc"]),
-    ("summary plots", ["sum"]),
-    ("obspar", ["obspar"]),
-    ("Event files (evt2)", ["evt2"]),
-]
+DOWNLOAD_DATA_OPTIONS = {
+    "ARF, RMF, PHA2": ["arf", "rmf", "pha2"],
+    "PHA Type 1": ["pha1"],
+    "light curves": ["lc"],
+    "summary plots": ["sum"],
+    "obspar": ["obspar"],
+    "Event files (evt2)": ["evt2"],
+}
 
 
 def _parse_coordinate(value):
@@ -68,6 +60,8 @@ def _parse_coordinate(value):
         return None
 
     text = re.sub(r"\s+", " ", value.strip())
+    # common form to write coordinates is with a colon separator, e.g. "12:34:56.7 +12:34:56"
+    text = re.sub(r":", " ", text)
     if not text:
         return None
 
@@ -119,58 +113,32 @@ def _observation_result_entries(observations, source=None):
     results = []
     seen = set()
     for observation in observations:
-        observation_id = getattr(observation, "obsid", None)
-        if observation_id is None:
-            continue
-
-        key = (
-            getattr(source, "srcid", None)
-            if source is not None
-            else getattr(observation, "srcid", None),
-            observation_id,
-            getattr(observation, "instrument", None),
-        )
+        if source is None:
+            source = Source.objects.filter(srcid=observation.srcid).first()
+            assert source is not None, "Observation has no matching source."
+        key = (observation.obsid, observation.srcid)
         if key in seen:
             continue
         seen.add(key)
 
-        result_source = source
-        if result_source is None and getattr(observation, "srcid", None) is not None:
-            result_source = Source.objects.filter(srcid=observation.srcid).first()
-
-        observation_date_value = getattr(observation, "date_obs", None)
-        if observation_date_value is None:
-            observation_date_iso = "Unknown"
-        elif hasattr(observation_date_value, "strftime"):
-            observation_date_iso = observation_date_value.strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            observation_date_iso = str(observation_date_value)
+        observation_date_iso = observation.date_obs.strftime("%Y-%m-%d %H:%M:%S")
 
         result = {
-            "object_name": (
-                getattr(result_source, "source_name", None)
-                or getattr(result_source, "simbad_ID", None)
-                or getattr(result_source, "ned_ID", None)
+            "name": (
+                getattr(source, "source_name", None)
+                or getattr(source, "simbad_ID", None)
+                or getattr(source, "ned_ID", None)
                 or getattr(observation, "target", None)
-                or str(observation_id)
+                or str(observation.obsid)
             ),
-            "source_name": (
-                getattr(result_source, "source_name", None)
-                or getattr(result_source, "simbad_ID", None)
-                or getattr(result_source, "ned_ID", None)
-                or getattr(observation, "target", None)
-                or str(observation_id)
-            ),
-            "observation_id": observation_id,
+            "observation_id": observation.obsid,
             "tgcat_id": getattr(observation, "id", None),
             "instrument": getattr(observation, "instrument", "N/A"),
             "grating": getattr(observation, "grating", "N/A"),
             "exposure": observation.exposure,
             "exposure_ks": round(observation.exposure / 1000.0),
             "observation_date_iso": observation_date_iso,
-            "source_id": getattr(result_source, "srcid", None)
-            if result_source is not None
-            else getattr(observation, "srcid", None),
+            "source_id": source.srcid,
         }
         results.append(result)
     return results
@@ -220,38 +188,12 @@ def _coordinate_search_results(query, radius_deg: float = 0.1):
         return []
 
     radius = float(radius_deg or 0.1)
-    try:
-        source_rows = list(
-            Source.objects.filter(reject="N")
-            .filter(ra__isnull=False, decl__isnull=False)
-            .exclude(ra=None)
-            .exclude(decl=None)
-            .order_by("srcid")
-            .all()
-        )
-    except (AttributeError, TypeError, DatabaseError):
+    sources = list(Source.objects.filter(reject="N").order_by("srcid").all())
+
+    if not sources:
         return []
 
-    if not source_rows:
-        return []
-
-    valid_sources = []
-    valid_ras = []
-    valid_decls = []
-    for source in source_rows:
-        try:
-            ra_value = float(source.ra)
-            decl_value = float(source.decl)
-        except (TypeError, ValueError):
-            continue
-        valid_sources.append(source)
-        valid_ras.append(ra_value)
-        valid_decls.append(decl_value)
-
-    if not valid_sources:
-        return []
-
-    catalog = SkyCoord(valid_ras, valid_decls, unit=u.deg)
+    catalog = SkyCoord([s.ra for s in sources], [s.decl for s in sources], unit=u.deg)
     d2d = coord.separation(catalog)
     matches = d2d < radius * u.deg
 
@@ -259,7 +201,7 @@ def _coordinate_search_results(query, radius_deg: float = 0.1):
     for match_index, is_match in enumerate(matches):
         if not is_match:
             continue
-        source = valid_sources[int(match_index)]
+        source = sources[int(match_index)]
         if source is None:
             continue
 
@@ -324,7 +266,7 @@ def _search_results(query: str, radius_deg: float = 0.1):
     deduplicated = []
     for result in results:
         key = (
-            result.get("object_name"),
+            result.get("name"),
             result.get("observation_id"),
             result.get("instrument"),
             result.get("source_id"),
@@ -379,27 +321,6 @@ def help(request):
     return render(request, "catalog/help.html")
 
 
-def _download_category_matches(file_type, category):
-    """Return whether a TGCat file type belongs to a requested download bundle."""
-    normalized = str(file_type or "").strip().lower()
-    if not normalized:
-        return False
-
-    for option_value, option_types in DOWNLOAD_DATA_OPTIONS:
-        if option_value != category:
-            continue
-        if not option_types:
-            known_types = {
-                item.lower()
-                for _, group_types in DOWNLOAD_DATA_OPTIONS
-                for item in group_types
-            }
-            return normalized not in known_types
-        return normalized in {item.lower() for item in option_types}
-
-    return False
-
-
 def _normalized_obsid_list(values):
     """Parse a list of selected TGCat row IDs from the request."""
     selected = []
@@ -436,6 +357,7 @@ def _build_download_zip(selected_obsids, selected_categories):
 
     # Individual data files in the database are already compressed
     # so compressing again here would take a lot of time with only a few % gain of space.
+    # Default compression is ZIP_STORED, which is fast and does not recompress the files.
     with zipfile.ZipFile(archive_buffer, mode="w") as archive:
         for obsid in selected_obsids:
             observations = list(
@@ -456,8 +378,10 @@ def _build_download_zip(selected_obsids, selected_categories):
                 for row in file_rows:
                     file_type = str(getattr(row, "type", "") or "").strip().lower()
                     if not any(
-                        _download_category_matches(file_type, category)
-                        for category in selected_categories
+                        [
+                            file_type in type_list
+                            for type_list in DOWNLOAD_DATA_OPTIONS.values()
+                        ]
                     ):
                         continue
 
@@ -517,9 +441,9 @@ def download_selection(request):
         response["Content-Disposition"] = 'attachment; filename="tgcat_selection.zip"'
         return response
 
-    selected_categories = request.GET.getlist("categories") or [
-        value for value, _ in DOWNLOAD_DATA_OPTIONS
-    ]
+    selected_categories = request.GET.getlist("categories") or list(
+        DOWNLOAD_DATA_OPTIONS
+    )
     return render(
         request,
         "catalog/download_selection.html",
@@ -700,13 +624,7 @@ def observation_detail(request, obsid):
             + quote_plus(str(source.simbad_ID))
         )
 
-    observation_date_value = getattr(observation, "date_obs", None)
-    if observation_date_value is None:
-        observation_date_iso = "Unknown"
-    elif hasattr(observation_date_value, "strftime"):
-        observation_date_iso = observation_date_value.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        observation_date_iso = str(observation_date_value)
+    observation_date_iso = observation.date_obs.strftime("%Y-%m-%d %H:%M:%S")
 
     context = {
         "observation": observation,
@@ -724,7 +642,7 @@ def observation_detail(request, obsid):
         "exposure_ks": round(observation.exposure / 1000.0),
         "preview_images": _preview_image_entries_for_observation(observation),
         "observation_date_iso": observation_date_iso,
-        "notes_text": _as_plain_text(getattr(observation, "notes", None)),
+        "notes_text": _as_plain_text(getattr(observation, "comments", None)),
         "products": files,
     }
     return render(request, "catalog/observation_detail.html", context)

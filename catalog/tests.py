@@ -1,3 +1,4 @@
+import datetime
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,8 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from django.test import TestCase
 from django.urls import reverse
+
+OBS_DATE = datetime.datetime(2024, 1, 2, 3, 4, 5)
 
 
 class CatalogSmokeTests(TestCase):
@@ -75,6 +78,7 @@ class CatalogSmokeTests(TestCase):
             srcid=1944,
             instrument="ACIS",
             exposure=123.45,
+            date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             observation
@@ -108,12 +112,13 @@ class CatalogSmokeTests(TestCase):
             readmode="TIMED",
             datamode="FAINT",
             events=12345,
-            notes=b"Observation note with plain text output.",
+            comments=b"Observation note with plain text output.",
             ra=79.17237,
             decl=45.99796,
             ra_targ=79.17964,
             dec_targ=46.00259,
             exposure=14575.8,
+            date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
 
@@ -167,6 +172,7 @@ class CatalogSmokeTests(TestCase):
             ra_targ=1.1,
             dec_targ=2.1,
             exposure=100.0,
+            date_obs=OBS_DATE,
         )
         second_row = SimpleNamespace(
             id=11,
@@ -179,6 +185,7 @@ class CatalogSmokeTests(TestCase):
             ra_targ=3.1,
             dec_targ=4.1,
             exposure=200.0,
+            date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = first_row
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
@@ -213,7 +220,11 @@ class CatalogSmokeTests(TestCase):
             (data_root / "arcA" / "evt2" / "tgcid_101_evt2.fits").write_bytes(b"evt2")
 
             observation = SimpleNamespace(
-                id=101, obsid=10, target="CAPELLA", srcid=1944
+                id=101,
+                obsid=10,
+                target="CAPELLA",
+                srcid=1944,
+                date_obs=OBS_DATE,
             )
             mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
                 observation
@@ -284,12 +295,13 @@ class CatalogSmokeTests(TestCase):
                 readmode="TIMED",
                 datamode="FAINT",
                 events=12345,
-                notes=b"Observation note",
+                comments=b"Observation note",
                 ra=79.17237,
                 decl=45.99796,
                 ra_targ=79.17964,
                 dec_targ=46.00259,
                 exposure=14575.8,
+                date_obs=OBS_DATE,
             )
             mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
             mock_source_filter.return_value.first.return_value = SimpleNamespace(
@@ -324,6 +336,7 @@ class CatalogSmokeTests(TestCase):
             srcid=2959,
             instrument="ACIS",
             exposure=10.0,
+            date_obs=OBS_DATE,
         )
         second_obs = SimpleNamespace(
             obsid=3,
@@ -331,6 +344,7 @@ class CatalogSmokeTests(TestCase):
             srcid=1618,
             instrument="ACIS",
             exposure=20.0,
+            date_obs=OBS_DATE,
         )
         third_obs = SimpleNamespace(
             obsid=3,
@@ -338,6 +352,7 @@ class CatalogSmokeTests(TestCase):
             srcid=2972,
             instrument="ACIS",
             exposure=30.0,
+            date_obs=OBS_DATE,
         )
         fourth_obs = SimpleNamespace(
             obsid=3,
@@ -345,6 +360,7 @@ class CatalogSmokeTests(TestCase):
             srcid=2970,
             instrument="ACIS",
             exposure=40.0,
+            date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             first_obs,
@@ -377,6 +393,7 @@ class CatalogSmokeTests(TestCase):
             srcid=1,
             instrument="ACIS",
             exposure=7.5,
+            date_obs=OBS_DATE,
         )
         second_obs = SimpleNamespace(
             obsid=7,
@@ -384,6 +401,7 @@ class CatalogSmokeTests(TestCase):
             srcid=2,
             instrument="ACIS",
             exposure=8.5,
+            date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             first_obs,
@@ -454,9 +472,24 @@ class CatalogSmokeTests(TestCase):
         )
         mock_source_filter.return_value = FakeSourceQuerySet([source])
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
-            SimpleNamespace(obsid=101, instrument="ACIS", exposure=101.0),
-            SimpleNamespace(obsid=203, instrument="LETGS", exposure=203.0),
-            SimpleNamespace(obsid=999, instrument="ACIS", exposure=999.0),
+            SimpleNamespace(
+                obsid=101,
+                instrument="ACIS",
+                exposure=101.0,
+                date_obs=OBS_DATE,
+            ),
+            SimpleNamespace(
+                obsid=203,
+                instrument="LETGS",
+                exposure=203.0,
+                date_obs=OBS_DATE,
+            ),
+            SimpleNamespace(
+                obsid=999,
+                instrument="ACIS",
+                exposure=999.0,
+                date_obs=OBS_DATE,
+            ),
         ]
 
         response = self.client.get(reverse("catalog:home") + "?q=TW Hydrae")
@@ -479,6 +512,7 @@ class CatalogSmokeTests(TestCase):
             srcid=77,
             instrument="ACIS",
             exposure=42.0,
+            date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             observation
@@ -531,7 +565,12 @@ class CatalogSmokeTests(TestCase):
         ]
         mock_source_filter.return_value = FakeSourceQuerySet(source_rows)
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
-            SimpleNamespace(obsid=2000 + index, instrument="ACIS", exposure=float(index + 1))
+            SimpleNamespace(
+                obsid=2000 + index,
+                instrument="ACIS",
+                exposure=float(index + 1),
+                date_obs=OBS_DATE,
+            )
             for index in range(12)
         ]
 
@@ -613,9 +652,21 @@ class CatalogSmokeTests(TestCase):
         mock_source_filter.return_value = FakeQuerySet([source])
         mock_obs_filter.return_value = FakeQuerySet(
             [
-                SimpleNamespace(obsid=5, instrument="ACIS", exposure=5.0),
-                SimpleNamespace(obsid=6443, instrument="LETGS", exposure=6443.0),
-                SimpleNamespace(obsid=7435, instrument="ACIS", exposure=7435.0),
+                SimpleNamespace(
+                    obsid=5, instrument="ACIS", exposure=5.0, date_obs=OBS_DATE
+                ),
+                SimpleNamespace(
+                    obsid=6443,
+                    instrument="LETGS",
+                    exposure=6443.0,
+                    date_obs=OBS_DATE,
+                ),
+                SimpleNamespace(
+                    obsid=7435,
+                    instrument="ACIS",
+                    exposure=7435.0,
+                    date_obs=OBS_DATE,
+                ),
             ]
         )
 
