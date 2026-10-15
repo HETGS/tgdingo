@@ -26,14 +26,29 @@ class CatalogSmokeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Example queries")
 
+    @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.FileRecord.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
     def test_bulk_download_selection_page_lists_selected_products(
-        self, mock_obs_filter, mock_file_filter
+        self, mock_obs_filter, mock_file_filter, mock_source_filter
     ):
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
-            SimpleNamespace(id=101, obsid=10, instrument="ACIS"),
-            SimpleNamespace(id=202, obsid=11, instrument="LETGS"),
+            SimpleNamespace(id=101, obsid=10, srcid=1944, instrument="ACIS"),
+            SimpleNamespace(id=202, obsid=11, srcid=1945, instrument="LETGS"),
+        ]
+        mock_source_filter.return_value.first.side_effect = [
+            SimpleNamespace(
+                srcid=1944,
+                source_name="CAPELLA",
+                simbad_ID="Capella",
+                ned_ID=None,
+            ),
+            SimpleNamespace(
+                srcid=1945,
+                source_name="CASTOR",
+                simbad_ID="Castor",
+                ned_ID=None,
+            ),
         ]
         file_queryset = mock_file_filter.return_value
         file_queryset.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = []
@@ -65,8 +80,10 @@ class CatalogSmokeTests(TestCase):
             observation
         ]
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
+            srcid=1944,
             source_name="CAPELLA",
             simbad_ID="Capella",
+            ned_ID=None,
         )
 
         response = self.client.get(reverse("catalog:home") + "?q=873")
@@ -100,7 +117,12 @@ class CatalogSmokeTests(TestCase):
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
 
-        source = SimpleNamespace(source_name="CAPELLA", simbad_ID="Capella")
+        source = SimpleNamespace(
+            srcid=1944,
+            source_name="CAPELLA",
+            simbad_ID="Capella",
+            ned_ID=None,
+        )
         mock_source_filter.return_value.first.return_value = source
 
         file_record = SimpleNamespace(
@@ -160,7 +182,10 @@ class CatalogSmokeTests(TestCase):
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = first_row
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
-            source_name="DUPLICATE"
+            srcid=999,
+            source_name="DUPLICATE",
+            simbad_ID="DUPLICATE",
+            ned_ID=None,
         )
         file_queryset = mock_file_filter.return_value
         file_queryset.exclude.return_value.exclude.return_value.order_by.return_value = []
@@ -172,10 +197,11 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "5")
         self.assertContains(response, "DUPLICATE")
 
+    @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.FileRecord.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
     def test_bulk_download_zips_selected_file_groups(
-        self, mock_obs_filter, mock_file_filter
+        self, mock_obs_filter, mock_file_filter, mock_source_filter
     ):
         with tempfile.TemporaryDirectory() as tmp_dir:
             data_root = Path(tmp_dir)
@@ -192,6 +218,12 @@ class CatalogSmokeTests(TestCase):
             mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
                 observation
             ]
+            mock_source_filter.return_value.first.return_value = SimpleNamespace(
+                srcid=1944,
+                source_name="CAPELLA",
+                simbad_ID="Capella",
+                ned_ID=None,
+            )
             mock_file_filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = [
                 SimpleNamespace(
                     name="file", type="arf", value="arf1.fits", arc="arcA", size=3
@@ -286,7 +318,12 @@ class CatalogSmokeTests(TestCase):
     def test_object_detail_only_lists_accepted_observations(
         self, mock_source_filter, mock_obs_filter
     ):
-        source = SimpleNamespace(srcid=77, source_name="TW Hya", simbad_ID="TW Hya")
+        source = SimpleNamespace(
+            srcid=77,
+            source_name="TW Hya",
+            simbad_ID="TW Hya",
+            ned_ID=None,
+        )
         mock_source_filter.return_value.first.return_value = source
 
         observation_queryset = mock_obs_filter.return_value
@@ -341,7 +378,10 @@ class CatalogSmokeTests(TestCase):
             fourth_obs,
         ]
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
-            source_name="TRAPEZIUM"
+            srcid=2959,
+            source_name="TRAPEZIUM",
+            simbad_ID="TRAPEZIUM",
+            ned_ID=None,
         )
 
         response = self.client.get(reverse("catalog:home") + "?q=3")
@@ -375,8 +415,18 @@ class CatalogSmokeTests(TestCase):
             second_obs,
         ]
         mock_source_filter.return_value.first.side_effect = [
-            SimpleNamespace(source_name="NGC 1234"),
-            SimpleNamespace(source_name="NGC 5678"),
+            SimpleNamespace(
+                srcid=101,
+                source_name="NGC 1234",
+                simbad_ID="NGC 1234",
+                ned_ID=None,
+            ),
+            SimpleNamespace(
+                srcid=102,
+                source_name="NGC 5678",
+                simbad_ID="NGC 5678",
+                ned_ID=None,
+            ),
         ]
 
         response = self.client.get(reverse("catalog:home") + "?q=7")
@@ -459,7 +509,10 @@ class CatalogSmokeTests(TestCase):
             observation
         ]
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
-            source_name="TW Hya"
+            srcid=77,
+            source_name="TW Hya",
+            simbad_ID="TW Hya",
+            ned_ID=None,
         )
 
         response = self.client.get(reverse("catalog:home") + "?q=42")
