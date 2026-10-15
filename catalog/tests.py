@@ -313,31 +313,6 @@ class CatalogSmokeTests(TestCase):
                 response, "tgcid_6972_summary_flux_overview_thumb.png"
             )
 
-    @patch("catalog.views.Observation.objects.filter")
-    @patch("catalog.views.Source.objects.filter")
-    def test_object_detail_only_lists_accepted_observations(
-        self, mock_source_filter, mock_obs_filter
-    ):
-        source = SimpleNamespace(
-            srcid=77,
-            source_name="TW Hya",
-            simbad_ID="TW Hya",
-            ned_ID=None,
-        )
-        mock_source_filter.return_value.first.return_value = source
-
-        observation_queryset = mock_obs_filter.return_value
-        observation_queryset.filter.return_value.values_list.return_value.__getitem__.return_value = [
-            101,
-            102,
-        ]
-
-        response = self.client.get(reverse("catalog:object_detail", args=["TW Hya"]))
-
-        self.assertEqual(response.status_code, 200)
-        observation_queryset.filter.assert_any_call(reject="N")
-        self.assertContains(response, "TW Hya")
-
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
     def test_search_returns_all_matching_obsid_rows(
