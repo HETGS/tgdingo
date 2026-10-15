@@ -1,3 +1,5 @@
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -173,6 +175,60 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "Observation")
         self.assertContains(response, "5")
         self.assertContains(response, "DUPLICATE")
+
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    @patch("catalog.views.FileRecord.objects.filter")
+    def test_observation_detail_shows_preview_gallery(
+        self, mock_file_filter, mock_obs_filter, mock_source_filter
+    ):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            preview_root = Path(tmp_dir)
+            (preview_root / "tgcid_6972_summary_flux_overview_thumb.png").write_bytes(
+                b"thumb"
+            )
+            (preview_root / "tgcid_6972_summary_flux_overview.png").write_bytes(b"full")
+            (preview_root / "tgcid_9999_summary_flux_overview_thumb.png").write_bytes(
+                b"thumb"
+            )
+
+            observation = SimpleNamespace(
+                id=6972,
+                obsid=5,
+                target="CAPELLA",
+                srcid=1944,
+                instrument="ACIS",
+                readmode="TIMED",
+                datamode="FAINT",
+                events=12345,
+                notes=b"Observation note",
+                ra=79.17237,
+                decl=45.99796,
+                ra_targ=79.17964,
+                dec_targ=46.00259,
+                exposure=14575.8,
+            )
+            mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
+            mock_source_filter.return_value.first.return_value = SimpleNamespace(
+                source_name="CAPELLA",
+                simbad_ID="Capella",
+            )
+            mock_file_filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value = []
+
+            with patch("catalog.views.PREVIEW_IMAGE_ROOT", new=preview_root):
+                response = self.client.get(
+                    reverse("catalog:observation_detail", args=[5])
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Preview images")
+            self.assertContains(response, "tgcid_6972_summary_flux_overview.png")
+            self.assertContains(
+                response, 'href="/preview/tgcid_6972_summary_flux_overview.png/"'
+            )
+            self.assertNotContains(
+                response, "tgcid_6972_summary_flux_overview_thumb.png"
+            )
 
     @patch("catalog.views.Observation.objects.filter")
     @patch("catalog.views.Source.objects.filter")

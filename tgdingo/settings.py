@@ -96,3 +96,9 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
 DATA_FILE_ROOT = BASE_DIR / "db"
+PREVIEW_IMAGE_ROOT = Path(
+    os.environ.get(
+        "TGDINGO_PREVIEW_IMAGE_ROOT",
+        "/Users/guenther/data/tg_test_data/png",
+    )
+)

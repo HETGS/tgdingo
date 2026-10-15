@@ -1,3 +1,4 @@
+import os
 import re
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -11,6 +12,16 @@ from django.http import FileResponse, Http404
 from django.shortcuts import render
 
 from .models import FileRecord, Observation, Source
+
+PREVIEW_IMAGE_ROOT = Path(
+    getattr(
+        settings,
+        "PREVIEW_IMAGE_ROOT",
+        os.environ.get(
+            "TGDINGO_PREVIEW_IMAGE_ROOT", "/Users/guenther/data/tg_test_data/png"
+        ),
+    )
+)
 
 
 def _parse_coordinate(value):
@@ -480,6 +491,59 @@ def _as_plain_text(value):
     return str(value)
 
 
+def _preview_image_entries_for_observation(observation):
+    """Return preview-image metadata for an observation from the configured PNG directory.
+
+    The TGCat PNG files are keyed by the internal observation record id, not by the public
+    ObsID value. For example, obsid=5 may correspond to tgcid_6972_*.png.
+    """
+    if observation is None:
+        return []
+
+    root = PREVIEW_IMAGE_ROOT
+    if not root.exists() or not root.is_dir():
+        return []
+
+    candidate_ids = []
+    for attribute in ("id", "obsid"):
+        value = getattr(observation, attribute, None)
+        if value is not None:
+            candidate_ids.append(str(value))
+    candidate_ids = list(dict.fromkeys(candidate_ids))
+    if not candidate_ids:
+        return []
+
+    image_rows = []
+    for path in sorted(root.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            continue
+
+        name = path.name
+        if "_thumb" in name.lower():
+            continue
+
+        for candidate in candidate_ids:
+            prefix = f"tgcid_{candidate}_"
+            if name.startswith(prefix):
+                label = name[len(prefix) :].rsplit(".", 1)[0] or "preview"
+                image_rows.append({"filename": name, "label": label})
+                break
+
+    return image_rows
+
+
+def preview_image(request, filename):
+    """Serve a preview image from the configured PNG directory."""
+    target = (PREVIEW_IMAGE_ROOT / filename).resolve()
+    preview_root = PREVIEW_IMAGE_ROOT.resolve()
+    if target != preview_root and preview_root not in target.parents:
+        raise Http404("Preview image not found.")
+    if not target.exists() or not target.is_file():
+        raise Http404("Preview image not found.")
+
+    return FileResponse(target.open("rb"), content_type="image/png")
+
+
 def observation_detail(request, obsid):
     """Render a single accepted observation with metadata and product links.
 
@@ -553,6 +617,7 @@ def observation_detail(request, obsid):
             else getattr(observation, "decl", None),
         },
         "exposure_ks": round(observation.exposure / 1000.0),
+        "preview_images": _preview_image_entries_for_observation(observation),
         "observation_date_iso": observation_date_iso,
         "notes_text": _as_plain_text(getattr(observation, "notes", None)),
         "products": files,

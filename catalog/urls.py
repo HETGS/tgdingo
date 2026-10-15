@@ -13,4 +13,5 @@ urlpatterns = [
     ),
     path("object/<str:object_name>/", views.object_detail, name="object_detail"),
     path("download/<str:filename>/", views.download_product, name="download"),
+    path("preview/<str:filename>/", views.preview_image, name="preview_image"),
 ]
