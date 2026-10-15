@@ -4,7 +4,9 @@ from urllib.parse import quote_plus
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
+from astropy.coordinates.name_resolve import NameResolveError
 from django.conf import settings
+from django.db import DatabaseError
 from django.http import FileResponse, Http404
 from django.shortcuts import render
 
@@ -35,32 +37,32 @@ def _parse_coordinate(value):
     if not text:
         return None
 
-    try:
-        if "," in text:
-            parts = [part.strip() for part in text.split(",") if part.strip()]
-            if len(parts) == 2:
+    if "," in text:
+        parts = [part.strip() for part in text.split(",") if part.strip()]
+        if len(parts) == 2:
+            try:
                 return SkyCoord(parts[0], parts[1], unit=(u.deg, u.deg))
-
-        tokens = text.split()
-        if len(tokens) == 2:
-            try:
-                return SkyCoord(float(tokens[0]), float(tokens[1]), unit=u.deg)
-            except Exception:
-                pass
-            try:
-                return SkyCoord(tokens[0], tokens[1], unit=(u.hourangle, u.deg))
-            except Exception:
+            except (TypeError, ValueError, u.UnitsError):
                 pass
 
-        if len(tokens) >= 6:
-            ra_text = " ".join(tokens[:3])
-            dec_text = " ".join(tokens[3:6])
-            try:
-                return SkyCoord(ra_text, dec_text, unit=(u.hourangle, u.deg))
-            except Exception:
-                pass
-    except Exception:
-        return None
+    tokens = text.split()
+    if len(tokens) == 2:
+        try:
+            return SkyCoord(float(tokens[0]), float(tokens[1]), unit=u.deg)
+        except (TypeError, ValueError):
+            pass
+        try:
+            return SkyCoord(tokens[0], tokens[1], unit=(u.hourangle, u.deg))
+        except (TypeError, ValueError, u.UnitsError):
+            pass
+
+    if len(tokens) >= 6:
+        ra_text = " ".join(tokens[:3])
+        dec_text = " ".join(tokens[3:6])
+        try:
+            return SkyCoord(ra_text, dec_text, unit=(u.hourangle, u.deg))
+        except (TypeError, ValueError, u.UnitsError):
+            pass
 
     return None
 
@@ -102,10 +104,7 @@ def _observation_result_entries(observations, source=None, summary_formatter=Non
 
         result_source = source
         if result_source is None and getattr(observation, "srcid", None) is not None:
-            try:
-                result_source = Source.objects.filter(srcid=observation.srcid).first()
-            except Exception:
-                result_source = None
+            result_source = Source.objects.filter(srcid=observation.srcid).first()
 
         result = {
             "object_name": (
@@ -145,15 +144,12 @@ def _source_observation_results(source, summary_formatter):
     list of dict
         Search result dictionaries, one per accepted observation for the source.
     """
-    try:
-        matched_observations = list(
-            Observation.objects.filter(srcid=source.srcid)
-            .filter(reject="N")
-            .order_by("obsid")
-            .all()
-        )
-    except Exception:
-        matched_observations = []
+    matched_observations = list(
+        Observation.objects.filter(srcid=source.srcid)
+        .filter(reject="N")
+        .order_by("obsid")
+        .all()
+    )
 
     return _observation_result_entries(
         matched_observations, source=source, summary_formatter=summary_formatter
@@ -182,7 +178,7 @@ def _coordinate_search_results(query, radius_deg: float = 0.1):
 
     radius = float(radius_deg or 0.1)
     try:
-        source_rows = (
+        source_rows = list(
             Source.objects.filter(reject="N")
             .filter(ra__isnull=False, decl__isnull=False)
             .exclude(ra=None)
@@ -190,33 +186,37 @@ def _coordinate_search_results(query, radius_deg: float = 0.1):
             .order_by("srcid")
             .all()
         )
-    except Exception:
+    except (AttributeError, TypeError, DatabaseError):
         return []
 
     if not source_rows:
         return []
 
-    try:
-        catalog = SkyCoord(
-            [float(source.ra) for source in source_rows],
-            [float(source.decl) for source in source_rows],
-            unit=u.deg,
-        )
-    except Exception:
+    valid_sources = []
+    valid_ras = []
+    valid_decls = []
+    for source in source_rows:
+        try:
+            ra_value = float(source.ra)
+            decl_value = float(source.decl)
+        except (TypeError, ValueError):
+            continue
+        valid_sources.append(source)
+        valid_ras.append(ra_value)
+        valid_decls.append(decl_value)
+
+    if not valid_sources:
         return []
 
-    try:
-        d2d = coord.separation(catalog)
-        matches = d2d < radius * u.deg
-    except Exception:
-        return []
+    catalog = SkyCoord(valid_ras, valid_decls, unit=u.deg)
+    d2d = coord.separation(catalog)
+    matches = d2d < radius * u.deg
 
     results = []
-    seen = set()
     for match_index, is_match in enumerate(matches):
         if not is_match:
             continue
-        source = source_rows[int(match_index)]
+        source = valid_sources[int(match_index)]
         if source is None:
             continue
 
@@ -255,15 +255,12 @@ def _search_results(query: str, radius_deg: float = 0.1):
         return _coordinate_search_results(query, radius_deg=radius_deg)
 
     if re.fullmatch(r"\d+", query):
-        try:
-            matching_observations = list(
-                Observation.objects.filter(obsid=int(query))
-                .filter(reject="N")
-                .order_by("id")
-                .all()
-            )
-        except Exception:
-            return []
+        matching_observations = list(
+            Observation.objects.filter(obsid=int(query))
+            .filter(reject="N")
+            .order_by("id")
+            .all()
+        )
         return _observation_result_entries(
             matching_observations,
             summary_formatter=lambda src, observation: (
@@ -292,14 +289,15 @@ def _search_results(query: str, radius_deg: float = 0.1):
                     ),
                 )
             )
-    except Exception:
+    except (AttributeError, TypeError, DatabaseError):
         pass
 
     try:
         resolved_coord = SkyCoord.from_name(query)
-        if resolved_coord is not None:
-            results.extend(_coordinate_search_results(resolved_coord, radius_deg=radius_deg))
-    except Exception:
+        results.extend(
+            _coordinate_search_results(resolved_coord, radius_deg=radius_deg)
+        )
+    except (ValueError, TypeError, NameResolveError):
         pass
 
     seen = set()
@@ -334,7 +332,7 @@ def home(request):
     query = (request.GET.get("q") or "").strip()
     radius_raw = request.GET.get("radius")
     try:
-        radius = float(radius_raw) if radius_raw not in (None, "") else 0.1
+        radius = float(radius_raw)
     except (TypeError, ValueError):
         radius = 0.1
     results = _search_results(query, radius_deg=radius)
@@ -390,24 +388,18 @@ def download_selection(request):
     seen = set()
 
     for obsid in selected_obsids:
-        try:
-            observations = list(
-                Observation.objects.filter(obsid=obsid)
-                .filter(reject="N")
-                .order_by("id")
-                .all()
-            )
-        except Exception:
-            observations = []
+        observations = list(
+            Observation.objects.filter(obsid=obsid)
+            .filter(reject="N")
+            .order_by("id")
+            .all()
+        )
 
         for observation in observations:
             source = None
             observation_srcid = getattr(observation, "srcid", None)
             if observation_srcid is not None:
-                try:
-                    source = Source.objects.filter(srcid=observation_srcid).first()
-                except Exception:
-                    source = None
+                source = Source.objects.filter(srcid=observation_srcid).first()
 
             target_name = (
                 getattr(source, "source_name", None)
@@ -453,26 +445,23 @@ def _observation_product_rows(observation):
         Product metadata records with file name, type, arc, and size.
     """
     files = []
-    try:
-        file_rows = (
-            FileRecord.objects.filter(id=observation.id)
-            .exclude(value__isnull=True)
-            .exclude(value="")
-            .order_by("type", "value")
+    file_rows = (
+        FileRecord.objects.filter(id=observation.id)
+        .exclude(value__isnull=True)
+        .exclude(value="")
+        .order_by("type", "value")
+    )
+    for row in file_rows:
+        if getattr(row, "name", None) != "file":
+            continue
+        files.append(
+            {
+                "name": row.value,
+                "type": row.type,
+                "arc": row.arc or "-",
+                "size": row.size,
+            }
         )
-        for row in file_rows:
-            if getattr(row, "name", None) != "file":
-                continue
-            files.append(
-                {
-                    "name": row.value,
-                    "type": row.type,
-                    "arc": row.arc or "-",
-                    "size": row.size,
-                }
-            )
-    except Exception:
-        files = []
 
     if not files:
         files = [
@@ -535,12 +524,7 @@ def observation_detail(request, obsid):
     if observation is None:
         raise Http404("Observation not found.")
 
-    source = None
-    if observation.srcid is not None:
-        try:
-            source = Source.objects.filter(srcid=observation.srcid).first()
-        except Exception:
-            source = None
+    source = Source.objects.filter(srcid=observation.srcid).first()
 
     files = _observation_product_rows(observation)
 
@@ -552,20 +536,15 @@ def observation_detail(request, obsid):
         or "Unknown target"
     )
     source_url = None
-    if source and getattr(source, "simbad_ID", None):
-        if str(source.simbad_ID) != "NO_AUTO_MATCH":
-            source_url = (
-                "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident="
-                + quote_plus(str(source.simbad_ID))
-            )
-
-    observation_date_value = getattr(observation, "date_obs", None)
-    if observation_date_value is None:
-        observation_date_iso = "Unknown"
-    elif hasattr(observation_date_value, "strftime"):
-        observation_date_iso = observation_date_value.strftime("%Y-%m-%d %H:%M:%S")
-    else:
-        observation_date_iso = str(observation_date_value)
+    if (
+        source
+        and getattr(source, "simbad_ID", None)
+        and str(source.simbad_ID) != "NO_AUTO_MATCH"
+    ):
+        source_url = (
+            "https://simbad.cds.unistra.fr/simbad/sim-basic?Ident="
+            + quote_plus(str(source.simbad_ID))
+        )
 
     context = {
         "observation": observation,
@@ -573,14 +552,10 @@ def observation_detail(request, obsid):
         "target_name": source_label,
         "source_url": source_url,
         "coordinates": {
-            "ra": observation.ra_targ
-            if observation.ra_targ is not None
-            else observation.ra,
-            "decl": observation.dec_targ
-            if observation.dec_targ is not None
-            else observation.decl,
+            "ra": observation.ra,
+            "decl": observation.decl,
         },
-        "observation_date_iso": observation_date_iso,
+        "observation_date_iso": observation.date_obs.strftime("%Y-%m-%d %H:%M:%S"),
         "notes_text": _as_plain_text(getattr(observation, "notes", None)),
         "products": files,
     }
@@ -602,14 +577,11 @@ def object_detail(request, object_name):
     HttpResponse
         Object detail template populated with a selected set of products.
     """
-    try:
-        source = Source.objects.filter(source_name__iexact=object_name).first()
-        if source is None:
-            source = Source.objects.filter(simbad_ID__iexact=object_name).first()
-        if source is None:
-            source = Source.objects.filter(ned_ID__iexact=object_name).first()
-    except Exception:
-        source = None
+    source = Source.objects.filter(source_name__iexact=object_name).first()
+    if source is None:
+        source = Source.objects.filter(simbad_ID__iexact=object_name).first()
+    if source is None:
+        source = Source.objects.filter(ned_ID__iexact=object_name).first()
 
     products = []
     if source is not None:
