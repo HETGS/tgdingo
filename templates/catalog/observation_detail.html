@@ -9,14 +9,14 @@
       <h1>Observation {{ observation.obsid }}</h1>
     </div>
     <div class="header-actions">
-      <a class="secondary-button" href="{% url 'catalog:search' %}">Back to search</a>
+      <a class="secondary-button" href="{% url 'catalog:home' %}">Back to home</a>
     </div>
   </section>
 
   <section class="panel">
     <dl class="meta-list">
       <div>
-        <dt>Observation ID</dt>
+        <dt>ObsID</dt>
         <dd>
           <a href="https://cda.harvard.edu/chaser/startViewer.action?obsid={{ observation.obsid }}" target="_blank" rel="noreferrer">
             {{ observation.obsid }}

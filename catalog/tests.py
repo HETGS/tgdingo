@@ -13,11 +13,16 @@ class CatalogSmokeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "TGCat")
 
-    def test_search_page_loads(self):
-        response = self.client.get(reverse("catalog:search") + "?q=cygnus")
+    def test_home_page_search_loads(self):
+        response = self.client.get(reverse("catalog:home") + "?q=cygnus")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Find targets and observations")
         self.assertContains(response, "Showing matches for")
+
+    def test_help_page_loads(self):
+        response = self.client.get(reverse("catalog:help"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Example queries")
 
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
@@ -38,7 +43,7 @@ class CatalogSmokeTests(TestCase):
             simbad_ID="Capella",
         )
 
-        response = self.client.get(reverse("catalog:search") + "?q=873")
+        response = self.client.get(reverse("catalog:home") + "?q=873")
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "CAPELLA")
@@ -200,12 +205,12 @@ class CatalogSmokeTests(TestCase):
             source_name="TRAPEZIUM"
         )
 
-        response = self.client.get(reverse("catalog:search") + "?q=3")
+        response = self.client.get(reverse("catalog:home") + "?q=3")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.content.decode("utf-8").count(
-                "Observation 3 matches the requested observation ID."
+                "Observation 3 matches the requested ObsID."
             ),
             4,
         )
@@ -237,7 +242,7 @@ class CatalogSmokeTests(TestCase):
             SimpleNamespace(source_name="NGC 5678"),
         ]
 
-        response = self.client.get(reverse("catalog:search") + "?q=7")
+        response = self.client.get(reverse("catalog:home") + "?q=7")
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "NGC 1234")
@@ -264,7 +269,7 @@ class CatalogSmokeTests(TestCase):
         ]
 
         response = self.client.get(
-            reverse("catalog:search") + "?q=165.45593,+-34.70856&radius=0.5"
+            reverse("catalog:home") + "?q=165.45593,+-34.70856&radius=0.5"
         )
 
         self.assertEqual(response.status_code, 200)
@@ -294,7 +299,7 @@ class CatalogSmokeTests(TestCase):
             SimpleNamespace(obsid=999, instrument="ACIS"),
         ]
 
-        response = self.client.get(reverse("catalog:search") + "?q=TW Hydrae")
+        response = self.client.get(reverse("catalog:home") + "?q=TW Hydrae")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
@@ -303,7 +308,33 @@ class CatalogSmokeTests(TestCase):
         )
         self.assertContains(response, "TW Hya")
 
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_digit_only_query_uses_obsid_search_only(
+        self, mock_obs_filter, mock_source_filter
+    ):
+        observation = SimpleNamespace(
+            obsid=42,
+            target="TW Hya",
+            srcid=77,
+            instrument="ACIS",
+        )
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            observation
+        ]
+        mock_source_filter.return_value.first.return_value = SimpleNamespace(
+            source_name="TW Hya"
+        )
+
+        response = self.client.get(reverse("catalog:home") + "?q=42")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Observation 42 matches the requested ObsID.")
+        self.assertEqual(len(response.context["results"]), 1)
+        self.assertEqual(response.context["results"][0]["observation_id"], 42)
+
     @patch("catalog.views._coordinate_search_results")
+    @patch("catalog.views.SkyCoord.from_name")
     @patch("catalog.views._parse_coordinate")
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
@@ -312,6 +343,7 @@ class CatalogSmokeTests(TestCase):
         mock_obs_filter,
         mock_source_filter,
         mock_parse_coordinate,
+        mock_from_name,
         mock_coordinate_search_results,
     ):
         class FakeSourceQuerySet(list):
@@ -354,10 +386,11 @@ class CatalogSmokeTests(TestCase):
             None,
             SkyCoord(165.46625, -34.70473, unit=u.deg),
         ]
+        mock_from_name.return_value = SkyCoord(165.46625, -34.70473, unit=u.deg)
 
-        name_response = self.client.get(reverse("catalog:search") + "?q=TW Hydrae")
+        name_response = self.client.get(reverse("catalog:home") + "?q=TW Hydrae")
         coord_response = self.client.get(
-            reverse("catalog:search") + "?q=11+01+51.9053285064+-34+42+17.033218380"
+            reverse("catalog:home") + "?q=11+01+51.9053285064+-34+42+17.033218380"
         )
 
         self.assertEqual(name_response.status_code, 200)
@@ -377,6 +410,8 @@ class CatalogSmokeTests(TestCase):
         self.assertGreaterEqual(len(name_obsids), 11)
         self.assertGreaterEqual(len(coord_obsids), 11)
         self.assertEqual(name_obsids, coord_obsids)
+        mock_from_name.assert_called_once_with("TW Hydrae")
+        self.assertGreaterEqual(mock_coordinate_search_results.call_count, 1)
 
     @patch("catalog.views._parse_coordinate")
     @patch("catalog.views.Observation.objects.filter")
@@ -442,7 +477,7 @@ class CatalogSmokeTests(TestCase):
         ]
 
         response = self.client.get(
-            reverse("catalog:search") + "?q=Target Without Observation"
+            reverse("catalog:home") + "?q=Target Without Observation"
         )
 
         self.assertEqual(response.status_code, 200)

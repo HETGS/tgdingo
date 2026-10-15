@@ -5,7 +5,7 @@ We are building a website to serve the data products of the Chandra Transmission
 The most important capabilities will be enumerated below:
 
 - Search for and download spectra, light curves, and other data products from the TGCat database.
-    - search by object name, coordinates, observation ID, and other criteria
+    - search by object name, coordinates, ObsID, and other criteria
 - display a list of objects or observations matching the search criteria
 - display a list of data products available for each object or observation
 - select and download data products in various formats (FITS)

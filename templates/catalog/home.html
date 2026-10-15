@@ -3,15 +3,70 @@
 {% block title %}TGCat Home{% endblock %}
 
 {% block content %}
-  <section class="hero">
-    <h1>Transmission Grating Catalog</h1>
-    <p class="muted-note">
-      Search for spectra, light curves, and data products from the TGCat database.
-    </p>
+  <section class="page-hero panel">
+    <div>
+      <p class="eyebrow">Catalog search</p>
+      <h1>Find targets and observations</h1>
+    </div>
 
-    <form class="search-form" method="get" action="{% url 'catalog:search' %}">
-      <input type="text" name="q" value="" placeholder="Search by object name, coordinates, or observation ID" />
+    <form class="search-form" method="get" action="{% url 'catalog:home' %}">
+      <input type="text" name="q" value="{{ query }}" placeholder="Search by object name, coordinates, or ObsID" />
       <button type="submit">Search</button>
     </form>
+
+    <div class="search-radius-row">
+      <label for="radius">Radius (degrees) for cone searches</label>
+      <input id="radius" type="number" name="radius" min="0.01" step="0.01" value="{{ radius|default:0.1 }}" />
+    </div>
+
+    {% if query %}
+      <p class="muted-note search-summary">Showing matches for <strong>{{ query }}</strong></p>
+    {% endif %}
+  </section>
+
+  <section class="results-panel">
+    {% if results %}
+      <div class="result-grid">
+        {% for result in results %}
+          <article class="result-card">
+            <div class="card-topline">
+              <span class="badge badge-blue">Target</span>
+              <span class="badge badge-slate">{{ result.instrument|default:"Unknown" }}</span>
+            </div>
+            <h3>{{ result.object_name }}</h3>
+            <dl class="meta-list">
+              <div>
+                <dt>Observation</dt>
+                <dd>
+                  {% if result.observation_id and result.observation_id != "N/A" %}
+                    <a href="{% url 'catalog:observation_detail' result.observation_id %}">{{ result.observation_id }}</a>
+                  {% else %}
+                    Unavailable
+                  {% endif %}
+                </dd>
+              </div>
+              <div>
+                <dt>Instrument</dt>
+                <dd>{{ result.instrument }}</dd>
+              </div>
+            </dl>
+            <p>{{ result.summary }}</p>
+            <div class="card-actions">
+              {% if result.observation_id and result.observation_id != "N/A" %}
+                <a class="link-button" href="{% url 'catalog:observation_detail' result.observation_id %}">View observation</a>
+              {% endif %}
+              <a class="link-button secondary-link" href="{% url 'catalog:object_detail' result.object_name %}">Target products</a>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      {% if query %}
+        <div class="empty-state panel">
+          <h2>No matching catalog entries</h2>
+          <p class="muted-note">No matching catalog entries were found for the current search.</p>
+        </div>
+      {% endif %}
+    {% endif %}
   </section>
 {% endblock %}

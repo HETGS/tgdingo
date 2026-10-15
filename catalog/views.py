@@ -65,6 +65,71 @@ def _parse_coordinate(value):
     return None
 
 
+def _observation_result_entries(observations, source=None, summary_formatter=None):
+    """Convert observation records into deduplicated result dictionaries.
+
+    Parameters
+    ----------
+    observations : iterable
+        Observation objects to convert into search result entries.
+    source : Source, optional
+        Matching source associated with the observations.
+    summary_formatter : callable, optional
+        Function that accepts ``(source, observation)`` and returns a summary string.
+
+    Returns
+    -------
+    list of dict
+        Result dictionaries for each valid observation.
+    """
+    results = []
+    seen = set()
+    for observation in observations:
+        observation_id = getattr(observation, "obsid", None)
+        if observation_id is None:
+            continue
+
+        key = (
+            getattr(source, "srcid", None)
+            if source is not None
+            else getattr(observation, "srcid", None),
+            observation_id,
+            getattr(observation, "instrument", None),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+
+        result_source = source
+        if result_source is None and getattr(observation, "srcid", None) is not None:
+            try:
+                result_source = Source.objects.filter(srcid=observation.srcid).first()
+            except Exception:
+                result_source = None
+
+        result = {
+            "object_name": (
+                getattr(result_source, "source_name", None)
+                or getattr(result_source, "simbad_ID", None)
+                or getattr(result_source, "ned_ID", None)
+                or getattr(observation, "target", None)
+                or str(observation_id)
+            ),
+            "observation_id": observation_id,
+            "instrument": getattr(observation, "instrument", "N/A"),
+            "source_id": getattr(result_source, "srcid", None)
+            if result_source is not None
+            else getattr(observation, "srcid", None),
+            "summary": (
+                summary_formatter(result_source, observation)
+                if summary_formatter is not None
+                else f"Observation {observation_id} matches the requested ObsID."
+            ),
+        }
+        results.append(result)
+    return results
+
+
 def _source_observation_results(source, summary_formatter):
     """Build result records for all accepted observations attached to a source.
 
@@ -90,43 +155,18 @@ def _source_observation_results(source, summary_formatter):
     except Exception:
         matched_observations = []
 
-    results = []
-    seen = set()
-    for observation in matched_observations:
-        observation_id = getattr(observation, "obsid", None)
-        if observation_id is None:
-            continue
-        key = (
-            getattr(source, "srcid", None),
-            observation_id,
-            getattr(observation, "instrument", None),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-
-        results.append(
-            {
-                "object_name": getattr(source, "source_name", None)
-                or getattr(source, "simbad_ID", None)
-                or getattr(source, "ned_ID", None)
-                or str(getattr(source, "srcid", "Unknown target")),
-                "observation_id": observation_id,
-                "instrument": getattr(observation, "instrument", "N/A"),
-                "source_id": getattr(source, "srcid", None),
-                "summary": summary_formatter(source, observation),
-            }
-        )
-    return results
+    return _observation_result_entries(
+        matched_observations, source=source, summary_formatter=summary_formatter
+    )
 
 
-def _coordinate_search_results(query: str, radius_deg: float = 0.1):
+def _coordinate_search_results(query, radius_deg: float = 0.1):
     """Return accepted observations within a radius of a coordinate.
 
     Parameters
     ----------
-    query : str
-        Coordinate string to search against the catalog.
+    query : str or astropy.coordinates.SkyCoord
+        Coordinate string or resolved coordinate to search against the catalog.
     radius_deg : float, default=0.1
         Angular search radius in degrees.
 
@@ -134,9 +174,9 @@ def _coordinate_search_results(query: str, radius_deg: float = 0.1):
     -------
     list of dict
         Result entries for matching source observations, using the matched source name
-        and each accepted observation ID.
+        and each accepted ObsID.
     """
-    coord = _parse_coordinate(query)
+    coord = query if isinstance(query, SkyCoord) else _parse_coordinate(query)
     if coord is None:
         return []
 
@@ -214,6 +254,23 @@ def _search_results(query: str, radius_deg: float = 0.1):
     if _parse_coordinate(query) is not None:
         return _coordinate_search_results(query, radius_deg=radius_deg)
 
+    if re.fullmatch(r"\d+", query):
+        try:
+            matching_observations = list(
+                Observation.objects.filter(obsid=int(query))
+                .filter(reject="N")
+                .order_by("id")
+                .all()
+            )
+        except Exception:
+            return []
+        return _observation_result_entries(
+            matching_observations,
+            summary_formatter=lambda src, observation: (
+                f"Observation {observation.obsid} matches the requested ObsID."
+            ),
+        )
+
     results = []
 
     try:
@@ -238,39 +295,12 @@ def _search_results(query: str, radius_deg: float = 0.1):
     except Exception:
         pass
 
-    if query.isdigit():
-        try:
-            matching_observations = list(
-                Observation.objects.filter(obsid=int(query))
-                .filter(reject="N")
-                .order_by("id")
-                .all()
-            )
-            for observation in matching_observations:
-                source = None
-                if observation.srcid is not None:
-                    try:
-                        source = Source.objects.filter(srcid=observation.srcid).first()
-                    except Exception:
-                        source = None
-                target_name = (
-                    getattr(source, "source_name", None)
-                    or getattr(source, "simbad_ID", None)
-                    or getattr(source, "ned_ID", None)
-                    or observation.target
-                    or str(observation.obsid)
-                )
-                results.append(
-                    {
-                        "object_name": target_name,
-                        "observation_id": observation.obsid,
-                        "instrument": getattr(observation, "instrument", "N/A"),
-                        "source_id": getattr(observation, "srcid", None),
-                        "summary": f"Observation {observation.obsid} matches the requested observation ID.",
-                    }
-                )
-        except Exception:
-            pass
+    try:
+        resolved_coord = SkyCoord.from_name(query)
+        if resolved_coord is not None:
+            results.extend(_coordinate_search_results(resolved_coord, radius_deg=radius_deg))
+    except Exception:
+        pass
 
     seen = set()
     deduplicated = []
@@ -289,33 +319,17 @@ def _search_results(query: str, radius_deg: float = 0.1):
 
 
 def home(request):
-    """Render the landing page for the TGCat catalog frontend.
+    """Render the TGCat home page and execute the active search query.
 
     Parameters
     ----------
     request : HttpRequest
-        Incoming HTTP request.
+        Incoming request containing an optional ``q`` and ``radius``.
 
     Returns
     -------
     HttpResponse
-        Rendered home page with default empty search values.
-    """
-    return render(request, "catalog/home.html", {"query": "", "radius": 0.1})
-
-
-def search(request):
-    """Handle the catalog search page and prepare the result list for rendering.
-
-    Parameters
-    ----------
-    request : HttpRequest
-        Incoming search request with query and optional radius parameters.
-
-    Returns
-    -------
-    HttpResponse
-        Search results page rendered with the user query, radius, and matches.
+        Home page with the search form and any matching catalog entries.
     """
     query = (request.GET.get("q") or "").strip()
     radius_raw = request.GET.get("radius")
@@ -326,9 +340,25 @@ def search(request):
     results = _search_results(query, radius_deg=radius)
     return render(
         request,
-        "catalog/search.html",
+        "catalog/home.html",
         {"query": query, "radius": radius, "results": results},
     )
+
+
+def help(request):
+    """Render a static help page with example search queries.
+
+    Parameters
+    ----------
+    request : HttpRequest
+        Incoming help request.
+
+    Returns
+    -------
+    HttpResponse
+        Search examples page that demonstrates accepted query formats.
+    """
+    return render(request, "catalog/help.html")
 
 
 def _as_plain_text(value):
@@ -359,7 +389,7 @@ def observation_detail(request, obsid):
     request : HttpRequest
         Incoming request for a specific observation.
     obsid : int
-        Observation identifier to fetch.
+        ObsID to fetch.
 
     Returns
     -------

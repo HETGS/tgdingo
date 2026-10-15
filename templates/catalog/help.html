@@ -1,0 +1,25 @@
+{% extends 'catalog/base.html' %}
+
+{% block title %}TGCat Help{% endblock %}
+
+{% block content %}
+  <section class="page-hero panel">
+    <div>
+      <p class="eyebrow">Search help</p>
+      <h1>Example queries</h1>
+    </div>
+    <p class="muted-note">Use the search box on the home page with any of the examples below.</p>
+  </section>
+
+  <section class="results-panel">
+    <div class="panel">
+      <ul class="help-list">
+        <li><strong>TW Hydrae</strong> — target name search</li>
+        <li><strong>165.45593, -34.70856</strong> — decimal coordinates</li>
+        <li><strong>11 01 51.90 -34 42 17.03</strong> — sexagesimal coordinates</li>
+        <li><strong>873</strong> — ObsID</li>
+        <li><strong>NGC 1333</strong> — catalog object name</li>
+      </ul>
+    </div>
+  </section>
+{% endblock %}
