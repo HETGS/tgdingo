@@ -6,36 +6,42 @@
   <section class="page-hero panel">
     <div>
       <p class="eyebrow">Bulk download</p>
-      <h1>Selected TGCat products</h1>
+      <h1>Selected TGCat files</h1>
     </div>
-    <p class="muted-note">Files collected from the currently selected observations.</p>
+    <p class="muted-note">Choose one or more file groups for the selected observations.</p>
   </section>
 
-  {% if products %}
-    <section class="results-panel">
-      <div class="product-list">
-        {% for product in products %}
-          <article class="product-card">
-            <div class="card-topline">
-              <span class="badge badge-indigo">{{ product.type|upper }}</span>
-              <span class="badge badge-slate">Obs {{ product.observation_id }}</span>
-            </div>
-            <h3>{{ product.name }}</h3>
-            <p><strong>{{ product.target_name }}</strong></p>
-            {% if product.size %}
-              <p>{{ product.size }} bytes</p>
-            {% endif %}
-            <div class="product-actions">
-              <a class="link-button" href="{% url 'catalog:download' product.name %}">Download</a>
-            </div>
-          </article>
+  {% if selected_obsids %}
+    <section class="panel">
+      <h2>Selected observations</h2>
+      <p class="muted-note">Selected: {{ selected_obs_labels|join:", " }}</p>
+
+      {% if error %}
+        <p class="error-message">{{ error }}</p>
+      {% endif %}
+
+      <form method="post" action="{% url 'catalog:download_selection' %}">
+        {% csrf_token %}
+        {% for obsid in selected_obsids %}
+          <input type="hidden" name="obsids" value="{{ obsid }}" />
         {% endfor %}
-      </div>
+
+        <div class="download-option-list">
+          {% for value, file_types in download_options %}
+            <label class="download-option">
+              <input type="checkbox" name="categories" value="{{ value }}" {% if value in selected_categories %}checked{% endif %} />
+              <span>{{ value }}</span>
+            </label>
+          {% endfor %}
+        </div>
+
+        <button type="submit" class="primary-button">Download selected files as ZIP</button>
+      </form>
     </section>
   {% else %}
     <section class="empty-state panel">
-      <h2>No products selected</h2>
-      <p class="muted-note">Select one or more search results to add them to the bulk download list.</p>
+      <h2>No observations selected</h2>
+      <p class="muted-note">Select one or more search results to build a ZIP archive from the TGCat data tree.</p>
     </section>
   {% endif %}
 {% endblock %}

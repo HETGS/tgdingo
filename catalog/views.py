@@ -1,5 +1,7 @@
+import io
 import os
 import re
+import zipfile
 from pathlib import Path
 from urllib.parse import quote_plus
 
@@ -8,11 +10,18 @@ from astropy.coordinates import SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
 from django.conf import settings
 from django.db import DatabaseError
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import render
 
 from .models import FileRecord, Observation, Source
 
+DATA_FILE_ROOT = Path(
+    getattr(
+        settings,
+        "DATA_FILE_ROOT",
+        os.environ.get("TGDINGO_DATA_ROOT", "/Users/guenther/data/tg_test_data"),
+    )
+)
 PREVIEW_IMAGE_ROOT = Path(
     getattr(
         settings,
@@ -22,6 +31,20 @@ PREVIEW_IMAGE_ROOT = Path(
         ),
     )
 )
+DOWNLOAD_DATA_OPTIONS = [
+    (
+        "ARF, RMF, PHA2",
+        ["arf", "rmf", "pha2"],
+    ),
+    (
+        "PHA Type 1",
+        ["pha1"],
+    ),
+    ("light curves", ["lc"]),
+    ("summary plots", ["sum"]),
+    ("obspar", ["obspar"]),
+    ("Event files (evt2)", ["evt2"]),
+]
 
 
 def _parse_coordinate(value):
@@ -139,6 +162,7 @@ def _observation_result_entries(observations, source=None):
                 or str(observation_id)
             ),
             "observation_id": observation_id,
+            "tgcat_id": getattr(observation, "id", None),
             "instrument": getattr(observation, "instrument", "N/A"),
             "grating": getattr(observation, "grating", "N/A"),
             "exposure": observation.exposure,
@@ -355,75 +379,156 @@ def help(request):
     return render(request, "catalog/help.html")
 
 
-def download_selection(request):
-    """Render a bulk download page for the selected observation products.
+def _download_category_matches(file_type, category):
+    """Return whether a TGCat file type belongs to a requested download bundle."""
+    normalized = str(file_type or "").strip().lower()
+    if not normalized:
+        return False
 
-    Parameters
-    ----------
-    request : HttpRequest
-        Incoming request carrying selected observation IDs.
+    for option_value, option_types in DOWNLOAD_DATA_OPTIONS:
+        if option_value != category:
+            continue
+        if not option_types:
+            known_types = {
+                item.lower()
+                for _, group_types in DOWNLOAD_DATA_OPTIONS
+                for item in group_types
+            }
+            return normalized not in known_types
+        return normalized in {item.lower() for item in option_types}
 
-    Returns
-    -------
-    HttpResponse
-        Page listing all product files for the selected observations.
-    """
-    raw_obsids = request.GET.getlist("obsids")
-    selected_obsids = []
-    for value in raw_obsids:
+    return False
+
+
+def _normalized_obsid_list(values):
+    """Parse a list of selected TGCat row IDs from the request."""
+    selected = []
+    for value in values:
         for token in str(value).split(","):
             token = token.strip()
-            if token:
-                try:
-                    selected_obsids.append(int(token))
-                except ValueError:
-                    continue
+            if not token:
+                continue
+            try:
+                selected.append(int(token))
+            except ValueError:
+                continue
+    return list(dict.fromkeys(selected))
 
-    selected_obsids = list(dict.fromkeys(selected_obsids))
-    products = []
-    seen = set()
 
-    for obsid in selected_obsids:
-        observations = list(
-            Observation.objects.filter(obsid=obsid)
-            .filter(reject="N")
-            .order_by("id")
-            .all()
-        )
+def _selected_observation_display_name(observation_id):
+    """Render the user-facing selection label based on the TGCat observation row."""
+    observation = (
+        Observation.objects.filter(id=observation_id).filter(reject="N").first()
+    )
+    # Should never happen , but better save than sorry.
+    if observation is None:
+        return f"(ObsID: {observation_id}, Unknown)"
+    source = Source.objects.filter(srcid=observation.srcid).first()
+    if source is None:
+        return f"(ObsID: {observation.obsid}, Unknown)"
+    return f"(ObsID: {observation.obsid}, {source.source_name})"
 
-        for observation in observations:
-            source = None
-            observation_srcid = getattr(observation, "srcid", None)
-            if observation_srcid is not None:
-                source = Source.objects.filter(srcid=observation_srcid).first()
 
-            target_name = (
-                getattr(source, "source_name", None)
-                or getattr(source, "simbad_ID", None)
-                or getattr(source, "ned_ID", None)
-                or getattr(observation, "target", None)
-                or f"Observation {obsid}"
+def _build_download_zip(selected_obsids, selected_categories):
+    """Create a zip archive of all matching TGCat files for the selected observations."""
+    archive_buffer = io.BytesIO()
+    selected_categories = set(selected_categories)
+
+    # Individual data files in the database are already compressed
+    # so compressing again here would take a lot of time with only a few % gain of space.
+    with zipfile.ZipFile(archive_buffer, mode="w") as archive:
+        for obsid in selected_obsids:
+            observations = list(
+                Observation.objects.filter(id=obsid)
+                .filter(reject="N")
+                .order_by("id")
+                .all()
             )
-            for product in _observation_product_rows(observation):
-                key = (obsid, product["name"], product["type"])
-                if key in seen:
-                    continue
-                seen.add(key)
-                products.append(
-                    {
-                        "observation_id": obsid,
-                        "target_name": target_name,
-                        "name": product["name"],
-                        "type": product["type"],
-                        "arc": product["arc"],
-                        "size": product["size"],
-                    }
+            for observation in observations:
+                file_rows = (
+                    FileRecord.objects.filter(id=observation.id)
+                    .filter(name="file")
+                    .exclude(value__isnull=True)
+                    .exclude(value="")
+                    .order_by("arc", "type", "value")
+                    .all()
                 )
+                for row in file_rows:
+                    file_type = str(getattr(row, "type", "") or "").strip().lower()
+                    if not any(
+                        _download_category_matches(file_type, category)
+                        for category in selected_categories
+                    ):
+                        continue
 
+                    arc_name = str(getattr(row, "arc", "") or "").strip()
+                    value_name = str(getattr(row, "value", "") or "").strip()
+                    if not arc_name or not value_name:
+                        continue
+
+                    source_path = (
+                        DATA_FILE_ROOT
+                        / arc_name
+                        / file_type
+                        / f"tgcid_{observation.id}_{value_name}"
+                    ).resolve()
+                    if not source_path.exists() or not source_path.is_file():
+                        continue
+
+                    archive_name = (
+                        f"obs_{getattr(observation, 'obsid', 'unknown')}_"
+                        f"tgid_{getattr(observation, 'id', 'unknown')}"
+                        f"/{source_path.name}"
+                    )
+                    archive.write(source_path, arcname=archive_name)
+
+    archive_buffer.seek(0)
+    return archive_buffer
+
+
+def download_selection(request):
+    """Render the bulk-download selection page or return a ZIP archive for the chosen groups."""
+    raw_obsids = request.GET.getlist("obsids") + request.POST.getlist("obsids")
+    selected_obsids = _normalized_obsid_list(raw_obsids)
+
+    selected_obs_labels = [
+        _selected_observation_display_name(obsid) for obsid in selected_obsids
+    ]
+
+    if request.method == "POST":
+        selected_categories = request.POST.getlist("categories") or []
+        if not selected_obsids or not selected_categories:
+            return render(
+                request,
+                "catalog/download_selection.html",
+                {
+                    "selected_obsids": selected_obsids,
+                    "selected_obs_labels": selected_obs_labels,
+                    "selected_categories": [],
+                    "download_options": DOWNLOAD_DATA_OPTIONS,
+                    "error": "Select at least one observation and one download option.",
+                },
+            )
+
+        archive_buffer = _build_download_zip(selected_obsids, selected_categories)
+        response = HttpResponse(
+            archive_buffer.getvalue(), content_type="application/zip"
+        )
+        response["Content-Disposition"] = 'attachment; filename="tgcat_selection.zip"'
+        return response
+
+    selected_categories = request.GET.getlist("categories") or [
+        value for value, _ in DOWNLOAD_DATA_OPTIONS
+    ]
     return render(
         request,
         "catalog/download_selection.html",
-        {"products": products, "selected_obsids": selected_obsids},
+        {
+            "selected_obsids": selected_obsids,
+            "selected_obs_labels": selected_obs_labels,
+            "selected_categories": selected_categories,
+            "download_options": DOWNLOAD_DATA_OPTIONS,
+        },
     )
 
 

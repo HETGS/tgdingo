@@ -48,7 +48,7 @@
                 {% for result in results %}
                   <tr data-obsid="{{ result.observation_id }}">
                     <td>
-                      <input type="checkbox" name="obsids" value="{{ result.observation_id }}" />
+                      <input type="checkbox" name="obsids" value="{{ result.tgcat_id|default:result.observation_id }}" />
                     </td>
                     <td>{{ result.source_name|default:result.object_name }}</td>
                     <td data-order="{{ result.observation_id|default:0 }}">

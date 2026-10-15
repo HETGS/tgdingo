@@ -100,5 +100,31 @@
         </a>
       {% endfor %}
     </div>
+  {% else %}
+    <section class="product-overview panel">
+      <div>
+        <p class="section-label">Associated products</p>
+        <h2>Files linked to this observation</h2>
+      </div>
+    </section>
+
+    {% if products %}
+      <div class="product-list">
+        {% for product in products %}
+          <article class="product-card">
+            <div class="card-topline">
+              <span class="badge badge-indigo">{{ product.type|upper }}</span>
+            </div>
+            <h3>{{ product.name }}</h3>
+            {% if product.size %}
+              <p>{{ product.size }} bytes</p>
+            {% endif %}
+            <div class="product-actions">
+              <a class="link-button" href="{% url 'catalog:download' product.name %}">Download</a>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
   {% endif %}
 {% endblock %}

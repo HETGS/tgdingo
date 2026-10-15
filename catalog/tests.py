@@ -36,22 +36,18 @@ class CatalogSmokeTests(TestCase):
             SimpleNamespace(id=202, obsid=11, instrument="LETGS"),
         ]
         file_queryset = mock_file_filter.return_value
-        file_queryset.exclude.return_value.exclude.return_value.order_by.return_value = [
-            SimpleNamespace(
-                name="file", type="evt2", value="evt2_10.fits", arc="arcA", size=123
-            ),
-            SimpleNamespace(
-                name="file", type="pha", value="pha_11.fits", arc="arcB", size=456
-            ),
-        ]
+        file_queryset.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = []
 
         response = self.client.get(
             reverse("catalog:download_selection") + "?obsids=10&obsids=11"
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "evt2_10.fits")
-        self.assertContains(response, "pha_11.fits")
+        self.assertContains(response, "ARF, RMF, PHA2")
+        self.assertContains(response, "light curves")
+        self.assertContains(response, "summary plots")
+        self.assertNotContains(response, "evt2_10.fits")
+        self.assertNotContains(response, "pha_11.fits")
 
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
@@ -175,6 +171,61 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "Observation")
         self.assertContains(response, "5")
         self.assertContains(response, "DUPLICATE")
+
+    @patch("catalog.views.FileRecord.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_bulk_download_zips_selected_file_groups(
+        self, mock_obs_filter, mock_file_filter
+    ):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            data_root = Path(tmp_dir)
+            (data_root / "arcA" / "arf").mkdir(parents=True)
+            (data_root / "arcA" / "lc").mkdir(parents=True)
+            (data_root / "arcA" / "evt2").mkdir(parents=True)
+            (data_root / "arcA" / "arf" / "tgcid_101_arf1.fits").write_bytes(b"arf")
+            (data_root / "arcA" / "lc" / "tgcid_101_lc1.fits").write_bytes(b"lc")
+            (data_root / "arcA" / "evt2" / "tgcid_101_evt2.fits").write_bytes(b"evt2")
+
+            observation = SimpleNamespace(
+                id=101, obsid=10, target="CAPELLA", srcid=1944
+            )
+            mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+                observation
+            ]
+            mock_file_filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = [
+                SimpleNamespace(
+                    name="file", type="arf", value="arf1.fits", arc="arcA", size=3
+                ),
+                SimpleNamespace(
+                    name="file", type="lc", value="lc1.fits", arc="arcA", size=2
+                ),
+                SimpleNamespace(
+                    name="file", type="evt2", value="evt2.fits", arc="arcA", size=4
+                ),
+            ]
+
+            with patch("catalog.views.DATA_FILE_ROOT", new=data_root):
+                response = self.client.post(
+                    reverse("catalog:download_selection") + "?obsids=10",
+                    {"categories": ["ARF, RMF, PHA2", "light curves"]},
+                )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response["Content-Type"], "application/zip")
+            self.assertIn(
+                'attachment; filename="tgcat_selection.zip"',
+                response["Content-Disposition"],
+            )
+            with tempfile.NamedTemporaryFile() as tmp_file:
+                tmp_file.write(response.content)
+                tmp_file.flush()
+                import zipfile
+
+                with zipfile.ZipFile(tmp_file.name) as archive:
+                    names = sorted(archive.namelist())
+                    self.assertIn("obs_10_tgid_101/tgcid_101_arf1.fits", names)
+                    self.assertIn("obs_10_tgid_101/tgcid_101_lc1.fits", names)
+                    self.assertNotIn("obs_10_tgid_101/tgcid_101_evt2.fits", names)
 
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
