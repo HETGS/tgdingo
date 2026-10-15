@@ -1,0 +1,41 @@
+{% extends 'catalog/base.html' %}
+
+{% block title %}Download selected products{% endblock %}
+
+{% block content %}
+  <section class="page-hero panel">
+    <div>
+      <p class="eyebrow">Bulk download</p>
+      <h1>Selected TGCat products</h1>
+    </div>
+    <p class="muted-note">Files collected from the currently selected observations.</p>
+  </section>
+
+  {% if products %}
+    <section class="results-panel">
+      <div class="product-list">
+        {% for product in products %}
+          <article class="product-card">
+            <div class="card-topline">
+              <span class="badge badge-indigo">{{ product.type|upper }}</span>
+              <span class="badge badge-slate">Obs {{ product.observation_id }}</span>
+            </div>
+            <h3>{{ product.name }}</h3>
+            <p><strong>{{ product.target_name }}</strong></p>
+            {% if product.size %}
+              <p>{{ product.size }} bytes</p>
+            {% endif %}
+            <div class="product-actions">
+              <a class="link-button" href="{% url 'catalog:download' product.name %}">Download</a>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+  {% else %}
+    <section class="empty-state panel">
+      <h2>No products selected</h2>
+      <p class="muted-note">Select one or more search results to add them to the bulk download list.</p>
+    </section>
+  {% endif %}
+{% endblock %}

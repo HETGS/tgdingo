@@ -361,6 +361,131 @@ def help(request):
     return render(request, "catalog/help.html")
 
 
+def download_selection(request):
+    """Render a bulk download page for the selected observation products.
+
+    Parameters
+    ----------
+    request : HttpRequest
+        Incoming request carrying selected observation IDs.
+
+    Returns
+    -------
+    HttpResponse
+        Page listing all product files for the selected observations.
+    """
+    raw_obsids = request.GET.getlist("obsids")
+    selected_obsids = []
+    for value in raw_obsids:
+        for token in str(value).split(","):
+            token = token.strip()
+            if token:
+                try:
+                    selected_obsids.append(int(token))
+                except ValueError:
+                    continue
+
+    selected_obsids = list(dict.fromkeys(selected_obsids))
+    products = []
+    seen = set()
+
+    for obsid in selected_obsids:
+        try:
+            observations = list(
+                Observation.objects.filter(obsid=obsid)
+                .filter(reject="N")
+                .order_by("id")
+                .all()
+            )
+        except Exception:
+            observations = []
+
+        for observation in observations:
+            source = None
+            observation_srcid = getattr(observation, "srcid", None)
+            if observation_srcid is not None:
+                try:
+                    source = Source.objects.filter(srcid=observation_srcid).first()
+                except Exception:
+                    source = None
+
+            target_name = (
+                getattr(source, "source_name", None)
+                or getattr(source, "simbad_ID", None)
+                or getattr(source, "ned_ID", None)
+                or getattr(observation, "target", None)
+                or f"Observation {obsid}"
+            )
+            for product in _observation_product_rows(observation):
+                key = (obsid, product["name"], product["type"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                products.append(
+                    {
+                        "observation_id": obsid,
+                        "target_name": target_name,
+                        "name": product["name"],
+                        "type": product["type"],
+                        "arc": product["arc"],
+                        "size": product["size"],
+                    }
+                )
+
+    return render(
+        request,
+        "catalog/download_selection.html",
+        {"products": products, "selected_obsids": selected_obsids},
+    )
+
+
+def _observation_product_rows(observation):
+    """Return the file metadata for an observation in the template-friendly format.
+
+    Parameters
+    ----------
+    observation : Observation
+        Accepted observation whose product rows should be listed.
+
+    Returns
+    -------
+    list of dict
+        Product metadata records with file name, type, arc, and size.
+    """
+    files = []
+    try:
+        file_rows = (
+            FileRecord.objects.filter(id=observation.id)
+            .exclude(value__isnull=True)
+            .exclude(value="")
+            .order_by("type", "value")
+        )
+        for row in file_rows:
+            if getattr(row, "name", None) != "file":
+                continue
+            files.append(
+                {
+                    "name": row.value,
+                    "type": row.type,
+                    "arc": row.arc or "-",
+                    "size": row.size,
+                }
+            )
+    except Exception:
+        files = []
+
+    if not files:
+        files = [
+            {
+                "name": f"product_{getattr(observation, 'obsid', 'unknown')}",
+                "type": "unknown",
+                "arc": "-",
+                "size": None,
+            }
+        ]
+    return files
+
+
 def _as_plain_text(value):
     """Convert binary or non-string values to plain text for template display.
 
@@ -417,32 +542,7 @@ def observation_detail(request, obsid):
         except Exception:
             source = None
 
-    files = []
-    try:
-        file_rows = (
-            FileRecord.objects.filter(id=observation.id)
-            .exclude(value__isnull=True)
-            .exclude(value="")
-            .order_by("type", "value")
-        )
-        for row in file_rows:
-            if row.name != "file":
-                continue
-            files.append(
-                {
-                    "name": row.value,
-                    "type": row.type,
-                    "arc": row.arc or "-",
-                    "size": row.size,
-                }
-            )
-    except Exception:
-        files = []
-
-    if not files:
-        files = [
-            {"name": f"product_{obsid}", "type": "unknown", "arc": "-", "size": None}
-        ]
+    files = _observation_product_rows(observation)
 
     source_label = (
         getattr(source, "source_name", None)

@@ -12,61 +12,120 @@
     <form class="search-form" method="get" action="{% url 'catalog:home' %}">
       <input type="text" name="q" value="{{ query }}" placeholder="Search by object name, coordinates, or ObsID" />
       <button type="submit">Search</button>
+      <div class="search-radius-row">
+        <label for="radius">Radius (degrees) for cone searches</label>
+        <input id="radius" type="number" name="radius" min="0.01" step="0.01" value="{{ radius|default:0.1 }}" />
+      </div>
     </form>
 
-    <div class="search-radius-row">
-      <label for="radius">Radius (degrees) for cone searches</label>
-      <input id="radius" type="number" name="radius" min="0.01" step="0.01" value="{{ radius|default:0.1 }}" />
-    </div>
-
-    {% if query %}
-      <p class="muted-note search-summary">Showing matches for <strong>{{ query }}</strong></p>
-    {% endif %}
-  </section>
-
-  <section class="results-panel">
-    {% if results %}
-      <div class="result-grid">
-        {% for result in results %}
-          <article class="result-card">
-            <div class="card-topline">
-              <span class="badge badge-blue">Target</span>
-              <span class="badge badge-slate">{{ result.instrument|default:"Unknown" }}</span>
-            </div>
-            <h3>{{ result.object_name }}</h3>
-            <dl class="meta-list">
-              <div>
-                <dt>Observation</dt>
-                <dd>
-                  {% if result.observation_id and result.observation_id != "N/A" %}
-                    <a href="{% url 'catalog:observation_detail' result.observation_id %}">{{ result.observation_id }}</a>
-                  {% else %}
-                    Unavailable
-                  {% endif %}
-                </dd>
-              </div>
-              <div>
-                <dt>Instrument</dt>
-                <dd>{{ result.instrument }}</dd>
-              </div>
-            </dl>
-            <p>{{ result.summary }}</p>
-            <div class="card-actions">
-              {% if result.observation_id and result.observation_id != "N/A" %}
-                <a class="link-button" href="{% url 'catalog:observation_detail' result.observation_id %}">View observation</a>
-              {% endif %}
-              <a class="link-button secondary-link" href="{% url 'catalog:object_detail' result.object_name %}">Target products</a>
-            </div>
-          </article>
-        {% endfor %}
+    <form id="download-selection-form" method="get" action="{% url 'catalog:download_selection' %}">
+      <div class="selection-actions">
+        <button id="bulk-download-button" type="submit" disabled>Download products</button>
+        <span id="selection-count" class="muted-note">0 selected</span>
       </div>
-    {% else %}
+
       {% if query %}
-        <div class="empty-state panel">
-          <h2>No matching catalog entries</h2>
-          <p class="muted-note">No matching catalog entries were found for the current search.</p>
-        </div>
+        <p class="muted-note search-summary">Showing matches for <strong>{{ query }}</strong></p>
       {% endif %}
-    {% endif %}
-  </section>
+
+      <section class="results-panel">
+        {% if results %}
+          <div class="result-grid">
+            {% for result in results %}
+              <article class="result-card" data-obsid="{{ result.observation_id }}" tabindex="0" role="button" aria-pressed="false">
+                <div class="card-topline">
+                  <span class="badge badge-blue">Target</span>
+                  <span class="badge badge-slate">{{ result.instrument|default:"Unknown" }}</span>
+                </div>
+                <label class="result-select">
+                  <input type="checkbox" name="obsids" value="{{ result.observation_id }}" />
+                  <span>Select</span>
+                </label>
+                <h3>{{ result.object_name }}</h3>
+                <dl class="meta-list">
+                  <div>
+                    <dt>Observation</dt>
+                    <dd>
+                      {% if result.observation_id and result.observation_id != "N/A" %}
+                        <a href="{% url 'catalog:observation_detail' result.observation_id %}">{{ result.observation_id }}</a>
+                      {% else %}
+                        Unavailable
+                      {% endif %}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Instrument</dt>
+                    <dd>{{ result.instrument }}</dd>
+                  </div>
+                </dl>
+                <p>{{ result.summary }}</p>
+                <div class="card-actions">
+                  {% if result.observation_id and result.observation_id != "N/A" %}
+                    <a class="link-button" href="{% url 'catalog:observation_detail' result.observation_id %}">View observation</a>
+                  {% endif %}
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          {% if query %}
+            <div class="empty-state panel">
+              <h2>No matching catalog entries</h2>
+              <p class="muted-note">No matching catalog entries were found for the current search.</p>
+            </div>
+          {% endif %}
+        {% endif %}
+      </section>
+    </form>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      const cards = document.querySelectorAll('.result-card');
+      const form = document.getElementById('download-selection-form');
+      const button = document.getElementById('bulk-download-button');
+      const countLabel = document.getElementById('selection-count');
+
+      function updateSelectionState() {
+        const checked = Array.from(document.querySelectorAll('.result-card input[type="checkbox"]:checked'));
+        button.disabled = checked.length === 0;
+        countLabel.textContent = checked.length === 1 ? '1 selected' : checked.length + ' selected';
+      }
+
+      cards.forEach(function (card) {
+        const checkbox = card.querySelector('input[type="checkbox"]');
+        const sync = function () {
+          card.classList.toggle('result-card--selected', checkbox.checked);
+          card.setAttribute('aria-pressed', String(checkbox.checked));
+          updateSelectionState();
+        };
+
+        checkbox.addEventListener('change', sync);
+
+        card.addEventListener('click', function (event) {
+          if (event.target.closest('a, button, input')) {
+            return;
+          }
+          checkbox.checked = !checkbox.checked;
+          sync();
+        });
+
+        card.addEventListener('keydown', function (event) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            checkbox.checked = !checkbox.checked;
+            sync();
+          }
+        });
+      });
+
+      if (form) {
+        form.addEventListener('submit', function (event) {
+          const checkedBoxes = form.querySelectorAll('input[type="checkbox"]:checked');
+          if (checkedBoxes.length === 0) {
+            event.preventDefault();
+          }
+        });
+      }
+    });
+  </script>
 {% endblock %}

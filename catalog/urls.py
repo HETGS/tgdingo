@@ -7,6 +7,7 @@ app_name = "catalog"
 urlpatterns = [
     path("", views.home, name="home"),
     path("help/", views.help, name="help"),
+    path("download-selection/", views.download_selection, name="download_selection"),
     path(
         "observation/<int:obsid>/", views.observation_detail, name="observation_detail"
     ),

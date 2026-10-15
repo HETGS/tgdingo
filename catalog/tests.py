@@ -24,6 +24,33 @@ class CatalogSmokeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Example queries")
 
+    @patch("catalog.views.FileRecord.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_bulk_download_selection_page_lists_selected_products(
+        self, mock_obs_filter, mock_file_filter
+    ):
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            SimpleNamespace(id=101, obsid=10, instrument="ACIS"),
+            SimpleNamespace(id=202, obsid=11, instrument="LETGS"),
+        ]
+        file_queryset = mock_file_filter.return_value
+        file_queryset.exclude.return_value.exclude.return_value.order_by.return_value = [
+            SimpleNamespace(
+                name="file", type="evt2", value="evt2_10.fits", arc="arcA", size=123
+            ),
+            SimpleNamespace(
+                name="file", type="pha", value="pha_11.fits", arc="arcB", size=456
+            ),
+        ]
+
+        response = self.client.get(
+            reverse("catalog:download_selection") + "?obsids=10&obsids=11"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "evt2_10.fits")
+        self.assertContains(response, "pha_11.fits")
+
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
     def test_search_finds_observation_by_obsid(
