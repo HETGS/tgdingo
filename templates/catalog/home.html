@@ -30,42 +30,49 @@
 
       <section class="results-panel">
         {% if results %}
-          <div class="result-grid">
-            {% for result in results %}
-              <article class="result-card" data-obsid="{{ result.observation_id }}" tabindex="0" role="button" aria-pressed="false">
-                <div class="card-topline">
-                  <span class="badge badge-blue">Target</span>
-                  <span class="badge badge-slate">{{ result.instrument|default:"Unknown" }}</span>
-                </div>
-                <label class="result-select">
-                  <input type="checkbox" name="obsids" value="{{ result.observation_id }}" />
-                  <span>Select</span>
-                </label>
-                <h3>{{ result.object_name }}</h3>
-                <dl class="meta-list">
-                  <div>
-                    <dt>Observation</dt>
-                    <dd>
+          <div class="table-wrap">
+            <table id="results-table" class="display compact" style="width:100%">
+              <thead>
+                <tr>
+                  <th>Select</th>
+                  <th>Source</th>
+                  <th>ObsID</th>
+                  <th>Instrument</th>
+                  <th>Grating</th>
+                  <th>Exposure</th>
+                  <th>Observation date</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for result in results %}
+                  <tr data-obsid="{{ result.observation_id }}">
+                    <td>
+                      <input type="checkbox" name="obsids" value="{{ result.observation_id }}" />
+                    </td>
+                    <td>{{ result.source_name|default:result.object_name }}</td>
+                    <td data-order="{{ result.observation_id|default:0 }}">
                       {% if result.observation_id and result.observation_id != "N/A" %}
                         <a href="{% url 'catalog:observation_detail' result.observation_id %}">{{ result.observation_id }}</a>
                       {% else %}
                         Unavailable
                       {% endif %}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Instrument</dt>
-                    <dd>{{ result.instrument }}</dd>
-                  </div>
-                </dl>
-                <p>{{ result.summary }}</p>
-                <div class="card-actions">
-                  {% if result.observation_id and result.observation_id != "N/A" %}
-                    <a class="link-button" href="{% url 'catalog:observation_detail' result.observation_id %}">View observation</a>
-                  {% endif %}
-                </div>
-              </article>
-            {% endfor %}
+                    </td>
+                    <td>{{ result.instrument|default:"Unknown" }}</td>
+                    <td>{{ result.grating|default:"N/A" }}</td>
+                    <td data-order="{{ result.exposure|default_if_none:0 }}">
+                        {{ result.exposure_ks|default:"Unknown" }} ks
+                    </td>
+                    <td>{{ result.observation_date_iso|default:"Unknown" }}</td>
+                    <td>
+                      {% if result.observation_id and result.observation_id != "N/A" %}
+                        <a class="link-button small-button" href="{% url 'catalog:observation_detail' result.observation_id %}">View observation</a>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
           </div>
         {% else %}
           {% if query %}
@@ -77,45 +84,52 @@
         {% endif %}
       </section>
     </form>
+  </section>
 
+  <link rel="stylesheet" href="https://cdn.datatables.net/3.1.4/css/dataTables.min.css" />
+  <link rel="stylesheet" href="https://cdn.datatables.net/columncontrol/2.1.2/css/columnControl.dataTables.min.css" />
+  <script src="https://code.jquery.com/jquery-3.12.4.min.js"></script>
+  <script src="https://cdn.datatables.net/3.1.4/js/dataTables.min.js"></script>
+  <script src="https://cdn.datatables.net/columncontrol/2.1.2/js/dataTables.columnControl.min.js"></script>
+  <script src="https://cdn.datatables.net/columncontrol/2.1.2/js/columnControl.dataTables.min.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', function () {
-      const cards = document.querySelectorAll('.result-card');
       const form = document.getElementById('download-selection-form');
       const button = document.getElementById('bulk-download-button');
       const countLabel = document.getElementById('selection-count');
 
       function updateSelectionState() {
-        const checked = Array.from(document.querySelectorAll('.result-card input[type="checkbox"]:checked'));
+        const checked = Array.from(document.querySelectorAll('#results-table input[type="checkbox"]:checked'));
         button.disabled = checked.length === 0;
         countLabel.textContent = checked.length === 1 ? '1 selected' : checked.length + ' selected';
       }
 
-      cards.forEach(function (card) {
-        const checkbox = card.querySelector('input[type="checkbox"]');
-        const sync = function () {
-          card.classList.toggle('result-card--selected', checkbox.checked);
-          card.setAttribute('aria-pressed', String(checkbox.checked));
-          updateSelectionState();
-        };
-
-        checkbox.addEventListener('change', sync);
-
-        card.addEventListener('click', function (event) {
-          if (event.target.closest('a, button, input')) {
-            return;
-          }
-          checkbox.checked = !checkbox.checked;
-          sync();
-        });
-
-        card.addEventListener('keydown', function (event) {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            checkbox.checked = !checkbox.checked;
-            sync();
+      if (document.getElementById('results-table')) {
+        new DataTable('#results-table', {
+          paging: true,
+          pageLength: 25,
+          searching: false,
+          order: [[2, 'asc']],
+          ordering: {
+            indicators: false,
+            handler: false
+          },
+          columnDefs: [
+            { orderable: false, targets: [0, 7] },
+            { type: 'num', targets: [2, 5] }
+          ],
+          columnControl: ['orderAsc', 'orderDesc'],
+          language: {
+            emptyTable: 'No matching catalog entries'
+          },
+          layout: {
+            topStart: 'pageLength'
           }
         });
+      }
+
+      document.querySelectorAll('#results-table input[type="checkbox"]').forEach(function (checkbox) {
+        checkbox.addEventListener('change', updateSelectionState);
       });
 
       if (form) {
@@ -126,6 +140,8 @@
           }
         });
       }
+
+      updateSelectionState();
     });
   </script>
 {% endblock %}

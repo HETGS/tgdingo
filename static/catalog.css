@@ -87,6 +87,90 @@ nav a {
   padding: 2rem;
 }
 
+.result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.result-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+
+.result-list-item--selected {
+  border-color: rgba(30, 94, 168, 0.45);
+  background: var(--brand-soft);
+}
+
+.result-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 72px;
+  padding-top: 0.4rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.result-list-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.7rem;
+}
+
+.result-header h3 {
+  margin: 0.2rem 0 0;
+  font-size: 1.35rem;
+}
+
+.result-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.7rem 1rem;
+  margin: 0 0 0.8rem;
+}
+
+.result-details div {
+  background: #f8faff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.6rem 0.7rem;
+}
+
+.result-details dt {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.result-details dd {
+  margin: 0.4rem 0 0;
+  font-weight: 600;
+}
+
+.result-date {
+  grid-column: 1 / -1;
+}
+
 .hero h1,
 .page-hero h1,
 .detail-header h1,
@@ -154,6 +238,44 @@ nav a {
 
 .results-panel {
   margin-top: 1.5rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+#results-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#results-table th,
+#results-table td {
+  padding: 0.85rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+#results-table th {
+  background: #f5f9ff;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+#results-table tbody tr:nth-child(even) {
+  background: #f9fbff;
+}
+
+#results-table tbody tr:hover {
+  background: #edf5ff;
 }
 
 .result-grid,
@@ -258,6 +380,12 @@ nav a {
   border-radius: 10px;
   padding: 0.72rem 1rem;
   margin-top: 0.9rem;
+}
+
+.small-button {
+  margin-top: 0;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.85rem;
 }
 
 .link-button {

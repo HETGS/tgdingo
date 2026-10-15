@@ -67,7 +67,7 @@ def _parse_coordinate(value):
     return None
 
 
-def _observation_result_entries(observations, source=None, summary_formatter=None):
+def _observation_result_entries(observations, source=None):
     """Convert observation records into deduplicated result dictionaries.
 
     Parameters
@@ -76,8 +76,6 @@ def _observation_result_entries(observations, source=None, summary_formatter=Non
         Observation objects to convert into search result entries.
     source : Source, optional
         Matching source associated with the observations.
-    summary_formatter : callable, optional
-        Function that accepts ``(source, observation)`` and returns a summary string.
 
     Returns
     -------
@@ -106,6 +104,14 @@ def _observation_result_entries(observations, source=None, summary_formatter=Non
         if result_source is None and getattr(observation, "srcid", None) is not None:
             result_source = Source.objects.filter(srcid=observation.srcid).first()
 
+        observation_date_value = getattr(observation, "date_obs", None)
+        if observation_date_value is None:
+            observation_date_iso = "Unknown"
+        elif hasattr(observation_date_value, "strftime"):
+            observation_date_iso = observation_date_value.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            observation_date_iso = str(observation_date_value)
+
         result = {
             "object_name": (
                 getattr(result_source, "source_name", None)
@@ -114,30 +120,34 @@ def _observation_result_entries(observations, source=None, summary_formatter=Non
                 or getattr(observation, "target", None)
                 or str(observation_id)
             ),
+            "source_name": (
+                getattr(result_source, "source_name", None)
+                or getattr(result_source, "simbad_ID", None)
+                or getattr(result_source, "ned_ID", None)
+                or getattr(observation, "target", None)
+                or str(observation_id)
+            ),
             "observation_id": observation_id,
             "instrument": getattr(observation, "instrument", "N/A"),
+            "grating": getattr(observation, "grating", "N/A"),
+            "exposure": observation.exposure,
+            "exposure_ks": round(observation.exposure / 1000.0),
+            "observation_date_iso": observation_date_iso,
             "source_id": getattr(result_source, "srcid", None)
             if result_source is not None
             else getattr(observation, "srcid", None),
-            "summary": (
-                summary_formatter(result_source, observation)
-                if summary_formatter is not None
-                else f"Observation {observation_id} matches the requested ObsID."
-            ),
         }
         results.append(result)
     return results
 
 
-def _source_observation_results(source, summary_formatter):
+def _source_observation_results(source):
     """Build result records for all accepted observations attached to a source.
 
     Parameters
     ----------
     source : Source
         Source object matched by a search query.
-    summary_formatter : callable
-        Function that accepts ``(source, observation)`` and returns a summary string.
 
     Returns
     -------
@@ -151,9 +161,7 @@ def _source_observation_results(source, summary_formatter):
         .all()
     )
 
-    return _observation_result_entries(
-        matched_observations, source=source, summary_formatter=summary_formatter
-    )
+    return _observation_result_entries(matched_observations, source=source)
 
 
 def _coordinate_search_results(query, radius_deg: float = 0.1):
@@ -220,14 +228,7 @@ def _coordinate_search_results(query, radius_deg: float = 0.1):
         if source is None:
             continue
 
-        results.extend(
-            _source_observation_results(
-                source,
-                lambda src, observation: (
-                    f"Target {getattr(src, 'source_name', getattr(src, 'simbad_ID', getattr(src, 'ned_ID', 'Unknown target')))} is within {radius:g}° of the searched coordinates."
-                ),
-            )
-        )
+        results.extend(_source_observation_results(source))
 
     return results
 
@@ -261,12 +262,7 @@ def _search_results(query: str, radius_deg: float = 0.1):
             .order_by("id")
             .all()
         )
-        return _observation_result_entries(
-            matching_observations,
-            summary_formatter=lambda src, observation: (
-                f"Observation {observation.obsid} matches the requested ObsID."
-            ),
-        )
+        return _observation_result_entries(matching_observations)
 
     results = []
 
@@ -277,18 +273,7 @@ def _search_results(query: str, radius_deg: float = 0.1):
             | Source.objects.filter(ned_ID__icontains=query)
         )
         for source in objects:
-            results.extend(
-                _source_observation_results(
-                    source,
-                    lambda src, observation: (
-                        f"Catalog entry for {getattr(src, 'source_name', None) or getattr(src, 'simbad_ID', None) or getattr(src, 'ned_ID', None)}."
-                        if getattr(src, "source_name", None)
-                        or getattr(src, "simbad_ID", None)
-                        or getattr(src, "ned_ID", None)
-                        else "Catalog entry for the selected target."
-                    ),
-                )
-            )
+            results.extend(_source_observation_results(source))
     except (AttributeError, TypeError, DatabaseError):
         pass
 
@@ -546,16 +531,29 @@ def observation_detail(request, obsid):
             + quote_plus(str(source.simbad_ID))
         )
 
+    observation_date_value = getattr(observation, "date_obs", None)
+    if observation_date_value is None:
+        observation_date_iso = "Unknown"
+    elif hasattr(observation_date_value, "strftime"):
+        observation_date_iso = observation_date_value.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        observation_date_iso = str(observation_date_value)
+
     context = {
         "observation": observation,
         "source": source,
         "target_name": source_label,
         "source_url": source_url,
         "coordinates": {
-            "ra": observation.ra,
-            "decl": observation.decl,
+            "ra": getattr(observation, "ra_targ", None)
+            if getattr(observation, "ra_targ", None) is not None
+            else getattr(observation, "ra", None),
+            "decl": getattr(observation, "dec_targ", None)
+            if getattr(observation, "dec_targ", None) is not None
+            else getattr(observation, "decl", None),
         },
-        "observation_date_iso": observation.date_obs.strftime("%Y-%m-%d %H:%M:%S"),
+        "exposure_ks": round(observation.exposure / 1000.0),
+        "observation_date_iso": observation_date_iso,
         "notes_text": _as_plain_text(getattr(observation, "notes", None)),
         "products": files,
     }

@@ -61,6 +61,7 @@ class CatalogSmokeTests(TestCase):
             target="CAPELLA",
             srcid=1944,
             instrument="ACIS",
+            exposure=123.45,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             observation
@@ -203,24 +204,28 @@ class CatalogSmokeTests(TestCase):
             target="TRAPEZIUM",
             srcid=2959,
             instrument="ACIS",
+            exposure=10.0,
         )
         second_obs = SimpleNamespace(
             obsid=3,
             target="TRAPEZIUM",
             srcid=1618,
             instrument="ACIS",
+            exposure=20.0,
         )
         third_obs = SimpleNamespace(
             obsid=3,
             target="TRAPEZIUM",
             srcid=2972,
             instrument="ACIS",
+            exposure=30.0,
         )
         fourth_obs = SimpleNamespace(
             obsid=3,
             target="TRAPEZIUM",
             srcid=2970,
             instrument="ACIS",
+            exposure=40.0,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             first_obs,
@@ -235,13 +240,9 @@ class CatalogSmokeTests(TestCase):
         response = self.client.get(reverse("catalog:home") + "?q=3")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.content.decode("utf-8").count(
-                "Observation 3 matches the requested ObsID."
-            ),
-            4,
-        )
+        self.assertEqual(len(response.context["results"]), 4)
         self.assertContains(response, "3")
+        self.assertContains(response, "TRAPEZIUM")
 
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
@@ -253,12 +254,14 @@ class CatalogSmokeTests(TestCase):
             target="GENERIC TARGET",
             srcid=1,
             instrument="ACIS",
+            exposure=7.5,
         )
         second_obs = SimpleNamespace(
             obsid=7,
             target="GENERIC TARGET",
             srcid=2,
             instrument="ACIS",
+            exposure=8.5,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             first_obs,
@@ -285,13 +288,11 @@ class CatalogSmokeTests(TestCase):
                 "object_name": "NGC 1234",
                 "observation_id": 101,
                 "instrument": "ACIS",
-                "summary": "Target NGC 1234 is within 0.5° of the searched coordinates.",
             },
             {
                 "object_name": "NGC 5678",
                 "observation_id": 102,
                 "instrument": "LETGS",
-                "summary": "Target NGC 5678 is within 0.5° of the searched coordinates.",
             },
         ]
 
@@ -321,9 +322,9 @@ class CatalogSmokeTests(TestCase):
         )
         mock_source_filter.return_value = FakeSourceQuerySet([source])
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
-            SimpleNamespace(obsid=101, instrument="ACIS"),
-            SimpleNamespace(obsid=203, instrument="LETGS"),
-            SimpleNamespace(obsid=999, instrument="ACIS"),
+            SimpleNamespace(obsid=101, instrument="ACIS", exposure=101.0),
+            SimpleNamespace(obsid=203, instrument="LETGS", exposure=203.0),
+            SimpleNamespace(obsid=999, instrument="ACIS", exposure=999.0),
         ]
 
         response = self.client.get(reverse("catalog:home") + "?q=TW Hydrae")
@@ -345,6 +346,7 @@ class CatalogSmokeTests(TestCase):
             target="TW Hya",
             srcid=77,
             instrument="ACIS",
+            exposure=42.0,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             observation
@@ -356,9 +358,9 @@ class CatalogSmokeTests(TestCase):
         response = self.client.get(reverse("catalog:home") + "?q=42")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Observation 42 matches the requested ObsID.")
         self.assertEqual(len(response.context["results"]), 1)
         self.assertEqual(response.context["results"][0]["observation_id"], 42)
+        self.assertContains(response, "TW Hya")
 
     @patch("catalog.views._coordinate_search_results")
     @patch("catalog.views.SkyCoord.from_name")
@@ -394,7 +396,7 @@ class CatalogSmokeTests(TestCase):
         ]
         mock_source_filter.return_value = FakeSourceQuerySet(source_rows)
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
-            SimpleNamespace(obsid=2000 + index, instrument="ACIS")
+            SimpleNamespace(obsid=2000 + index, instrument="ACIS", exposure=float(index + 1))
             for index in range(12)
         ]
 
@@ -404,7 +406,6 @@ class CatalogSmokeTests(TestCase):
                 "observation_id": 2000 + index,
                 "instrument": "ACIS",
                 "source_id": 1000 + index,
-                "summary": "Catalog entry for TW Hya.",
             }
             for index in range(12)
         ]
@@ -477,9 +478,9 @@ class CatalogSmokeTests(TestCase):
         mock_source_filter.return_value = FakeQuerySet([source])
         mock_obs_filter.return_value = FakeQuerySet(
             [
-                SimpleNamespace(obsid=5, instrument="ACIS"),
-                SimpleNamespace(obsid=6443, instrument="LETGS"),
-                SimpleNamespace(obsid=7435, instrument="ACIS"),
+                SimpleNamespace(obsid=5, instrument="ACIS", exposure=5.0),
+                SimpleNamespace(obsid=6443, instrument="LETGS", exposure=6443.0),
+                SimpleNamespace(obsid=7435, instrument="ACIS", exposure=7435.0),
             ]
         )
 
@@ -499,7 +500,6 @@ class CatalogSmokeTests(TestCase):
                 "object_name": "Target Without Observation",
                 "observation_id": "N/A",
                 "instrument": "ACIS",
-                "summary": "No observation record for this target.",
             }
         ]
 
