@@ -12,13 +12,53 @@ from django.urls import reverse
 OBS_DATE = datetime.datetime(2024, 1, 2, 3, 4, 5)
 
 
+class FakeQuerySet:
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def exclude(self, *args, **kwargs):
+        return self
+
+    def order_by(self, *args, **kwargs):
+        return self
+
+    def all(self):
+        return list(self.rows)
+
+    def first(self):
+        return self.rows[0] if self.rows else None
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def __len__(self):
+        return len(self.rows)
+
+    def __getitem__(self, item):
+        data = list(self.rows)
+        if isinstance(item, slice):
+            return FakeQuerySet(data[item])
+        return data[item]
+
+    def __or__(self, other):
+        return FakeQuerySet(list(self.rows) + list(other))
+
+
 class CatalogSmokeTests(TestCase):
     def test_home_page_loads(self):
         response = self.client.get(reverse("catalog:home"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "TGCat")
 
-    def test_home_page_search_loads(self):
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.SkyCoord.from_name")
+    def test_home_page_search_loads(self, mock_from_name, mock_source_filter):
+        mock_from_name.side_effect = ValueError("not found")
+        mock_source_filter.return_value = FakeQuerySet([])
+
         response = self.client.get(reverse("catalog:home") + "?q=cygnus")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Find targets and observations")
@@ -73,12 +113,14 @@ class CatalogSmokeTests(TestCase):
         self, mock_obs_filter, mock_source_filter
     ):
         observation = SimpleNamespace(
+            id=1,
             obsid=873,
             target="CAPELLA",
             srcid=1944,
             instrument="ACIS",
             exposure=123.45,
             date_obs=OBS_DATE,
+            reject="N",
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             observation
@@ -88,6 +130,9 @@ class CatalogSmokeTests(TestCase):
             source_name="CAPELLA",
             simbad_ID="Capella",
             ned_ID=None,
+            ra=79.17237,
+            decl=45.99796,
+            reject="N",
         )
 
         response = self.client.get(reverse("catalog:home") + "?q=873")
@@ -413,12 +458,18 @@ class CatalogSmokeTests(TestCase):
                 source_name="NGC 1234",
                 simbad_ID="NGC 1234",
                 ned_ID=None,
+                ra=1.0,
+                decl=2.0,
+                reject="N",
             ),
             SimpleNamespace(
                 srcid=102,
                 source_name="NGC 5678",
                 simbad_ID="NGC 5678",
                 ned_ID=None,
+                ra=3.0,
+                decl=4.0,
+                reject="N",
             ),
         ]
 
@@ -435,12 +486,12 @@ class CatalogSmokeTests(TestCase):
     ):
         mock_coordinate_search_results.return_value = [
             {
-                "object_name": "NGC 1234",
+                "name": "NGC 1234",
                 "observation_id": 101,
                 "instrument": "ACIS",
             },
             {
-                "object_name": "NGC 5678",
+                "name": "NGC 5678",
                 "observation_id": 102,
                 "instrument": "LETGS",
             },
@@ -460,35 +511,43 @@ class CatalogSmokeTests(TestCase):
     def test_name_search_lists_every_accepted_obsid_for_a_source(
         self, mock_obs_filter, mock_source_filter
     ):
-        class FakeSourceQuerySet(list):
-            def __or__(self, other):
-                return FakeSourceQuerySet(list(self) + list(other))
-
         source = SimpleNamespace(
             srcid=42,
             source_name="TW Hya",
             simbad_ID="TW Hya",
             ned_ID=None,
+            ra=165.46625,
+            decl=-34.70473056,
+            reject="N",
         )
-        mock_source_filter.return_value = FakeSourceQuerySet([source])
+        mock_source_filter.return_value = FakeQuerySet([source])
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             SimpleNamespace(
+                id=1001,
+                srcid=42,
                 obsid=101,
                 instrument="ACIS",
                 exposure=101.0,
                 date_obs=OBS_DATE,
+                reject="N",
             ),
             SimpleNamespace(
+                id=1002,
+                srcid=42,
                 obsid=203,
                 instrument="LETGS",
                 exposure=203.0,
                 date_obs=OBS_DATE,
+                reject="N",
             ),
             SimpleNamespace(
+                id=1003,
+                srcid=42,
                 obsid=999,
                 instrument="ACIS",
                 exposure=999.0,
                 date_obs=OBS_DATE,
+                reject="N",
             ),
         ]
 
@@ -544,32 +603,28 @@ class CatalogSmokeTests(TestCase):
         mock_from_name,
         mock_coordinate_search_results,
     ):
-        class FakeSourceQuerySet(list):
-            def __or__(self, other):
-                return FakeSourceQuerySet(list(self) + list(other))
-
-            def __getitem__(self, item):
-                data = list(self)
-                if isinstance(item, slice):
-                    return FakeSourceQuerySet(data[item])
-                return data[item]
-
         source_rows = [
             SimpleNamespace(
                 srcid=1000 + index,
                 source_name="TW Hya",
                 simbad_ID="TW Hya",
                 ned_ID=None,
+                ra=165.46625 + index * 0.001,
+                decl=-34.70473056 - index * 0.001,
+                reject="N",
             )
             for index in range(12)
         ]
-        mock_source_filter.return_value = FakeSourceQuerySet(source_rows)
+        mock_source_filter.return_value = FakeQuerySet(source_rows)
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
             SimpleNamespace(
+                id=2000 + index,
+                srcid=1000 + index,
                 obsid=2000 + index,
                 instrument="ACIS",
                 exposure=float(index + 1),
                 date_obs=OBS_DATE,
+                reject="N",
             )
             for index in range(12)
         ]
@@ -621,22 +676,6 @@ class CatalogSmokeTests(TestCase):
     def test_coordinate_search_returns_all_obsids_for_same_target(
         self, mock_source_filter, mock_obs_filter, mock_parse_coordinate
     ):
-        class FakeQuerySet:
-            def __init__(self, rows):
-                self.rows = rows
-
-            def filter(self, *args, **kwargs):
-                return self
-
-            def exclude(self, *args, **kwargs):
-                return self
-
-            def order_by(self, *args, **kwargs):
-                return self
-
-            def all(self):
-                return self.rows
-
         mock_parse_coordinate.return_value = SkyCoord(
             165.46625, -34.70473056, unit=u.deg
         )
@@ -648,24 +687,37 @@ class CatalogSmokeTests(TestCase):
             ned_ID=None,
             ra=165.46625,
             decl=-34.70473056,
+            reject="N",
         )
         mock_source_filter.return_value = FakeQuerySet([source])
         mock_obs_filter.return_value = FakeQuerySet(
             [
                 SimpleNamespace(
-                    obsid=5, instrument="ACIS", exposure=5.0, date_obs=OBS_DATE
+                    id=1,
+                    srcid=42,
+                    obsid=5,
+                    instrument="ACIS",
+                    exposure=5.0,
+                    date_obs=OBS_DATE,
+                    reject="N",
                 ),
                 SimpleNamespace(
+                    id=2,
+                    srcid=42,
                     obsid=6443,
                     instrument="LETGS",
                     exposure=6443.0,
                     date_obs=OBS_DATE,
+                    reject="N",
                 ),
                 SimpleNamespace(
+                    id=3,
+                    srcid=42,
                     obsid=7435,
                     instrument="ACIS",
                     exposure=7435.0,
                     date_obs=OBS_DATE,
+                    reject="N",
                 ),
             ]
         )

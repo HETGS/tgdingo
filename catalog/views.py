@@ -113,9 +113,14 @@ def _observation_result_entries(observations, source=None):
     results = []
     seen = set()
     for observation in observations:
-        if source is None:
-            source = Source.objects.filter(srcid=observation.srcid).first()
-            assert source is not None, "Observation has no matching source."
+        source_for_observation = source
+        if source_for_observation is None:
+            source_for_observation = Source.objects.filter(
+                srcid=observation.srcid
+            ).first()
+            assert source_for_observation is not None, (
+                "Observation has no matching source."
+            )
         key = (observation.obsid, observation.srcid)
         if key in seen:
             continue
@@ -125,9 +130,9 @@ def _observation_result_entries(observations, source=None):
 
         result = {
             "name": (
-                getattr(source, "source_name", None)
-                or getattr(source, "simbad_ID", None)
-                or getattr(source, "ned_ID", None)
+                getattr(source_for_observation, "source_name", None)
+                or getattr(source_for_observation, "simbad_ID", None)
+                or getattr(source_for_observation, "ned_ID", None)
                 or getattr(observation, "target", None)
                 or str(observation.obsid)
             ),
@@ -138,7 +143,7 @@ def _observation_result_entries(observations, source=None):
             "exposure": observation.exposure,
             "exposure_ks": round(observation.exposure / 1000.0),
             "observation_date_iso": observation_date_iso,
-            "source_id": source.srcid,
+            "source_id": source_for_observation.srcid,
         }
         results.append(result)
     return results
@@ -354,6 +359,11 @@ def _build_download_zip(selected_obsids, selected_categories):
     """Create a zip archive of all matching TGCat files for the selected observations."""
     archive_buffer = io.BytesIO()
     selected_categories = set(selected_categories)
+    allowed_types = {
+        file_type.lower()
+        for category in selected_categories
+        for file_type in DOWNLOAD_DATA_OPTIONS.get(category, [])
+    }
 
     # Individual data files in the database are already compressed
     # so compressing again here would take a lot of time with only a few % gain of space.
@@ -377,12 +387,7 @@ def _build_download_zip(selected_obsids, selected_categories):
                 )
                 for row in file_rows:
                     file_type = str(getattr(row, "type", "") or "").strip().lower()
-                    if not any(
-                        [
-                            file_type in type_list
-                            for type_list in DOWNLOAD_DATA_OPTIONS.values()
-                        ]
-                    ):
+                    if not file_type or file_type not in allowed_types:
                         continue
 
                     arc_name = str(getattr(row, "arc", "") or "").strip()
