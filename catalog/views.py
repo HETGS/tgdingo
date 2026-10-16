@@ -526,42 +526,55 @@ def _as_plain_text(value):
 
 
 def _preview_image_entries_for_observation(observation):
-    """Return preview-image metadata for an observation from the configured PNG directory.
+    """Return preview-image metadata for an observation from the SQL file metadata.
 
-    The TGCat PNG files are keyed by the internal observation record id, not by the public
-    ObsID value. For example, obsid=5 may correspond to tgcid_6972_*.png.
+    The database row identifies the logical preview family (for example,
+    "summary_spf.ps"), while the actual PNGs in the preview directory are page-aware and
+    can exist as "tgcid_<internal_id>_summary_spf.png",
+    "tgcid_<internal_id>_summary_spf-1.png", etc. We therefore check a small, known set
+    of likely numbered variants rather than scanning the whole preview directory.
     """
     if observation is None:
         return []
 
-    root = PREVIEW_IMAGE_ROOT
-    if not root.exists() or not root.is_dir():
-        return []
-
-    candidate_ids = []
-    for attribute in ("id", "obsid"):
-        value = getattr(observation, attribute, None)
-        if value is not None:
-            candidate_ids.append(str(value))
-    candidate_ids = list(dict.fromkeys(candidate_ids))
-    if not candidate_ids:
-        return []
+    if not PREVIEW_IMAGE_ROOT.exists() or not PREVIEW_IMAGE_ROOT.is_dir():
+        raise Http404("Preview image directory is not configured or does not exist.")
 
     image_rows = []
-    for path in sorted(root.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+    for row in (
+        FileRecord.objects.filter(id=observation.id)
+        .filter(name="file")
+        .filter(type="sum")
+        .exclude(value__isnull=True)
+        .exclude(value="")
+        .order_by("type", "value")
+        .all()
+    ):
+        value = str(getattr(row, "value", "") or "").strip()
+        if not value:
             continue
 
-        name = path.name
-        if "_thumb" in name.lower():
+        candidate = Path(value)
+        stem = candidate.stem
+        if not stem or "_thumb" in stem.lower():
             continue
 
-        for candidate in candidate_ids:
-            prefix = f"tgcid_{candidate}_"
-            if name.startswith(prefix):
-                label = name[len(prefix) :].rsplit(".", 1)[0] or "preview"
-                image_rows.append({"filename": name, "label": label})
-                break
+        base_prefix = f"tgcid_{observation.id}_{stem}"
+        filenames = [base_prefix + ".png"]
+        filenames.extend(f"{base_prefix}-{page}.png" for page in range(1, 4))
+
+        for filename in filenames:
+            if "_thumb" in filename.lower():
+                continue
+
+            target = (PREVIEW_IMAGE_ROOT / filename).resolve()
+            if not target.exists() or not target.is_file():
+                continue
+
+            label = filename.removeprefix(f"tgcid_{observation.id}_").removesuffix(
+                ".png"
+            )
+            image_rows.append({"filename": filename, "label": label})
 
     return image_rows
 

@@ -353,7 +353,10 @@ class CatalogSmokeTests(TestCase):
                 source_name="CAPELLA",
                 simbad_ID="Capella",
             )
-            mock_file_filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value = []
+            mock_file_filter.return_value.filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = [
+                SimpleNamespace(value="summary_flux_overview.ps"),
+                SimpleNamespace(value="summary_flux_overview_thumb.ps"),
+            ]
 
             with patch("catalog.views.PREVIEW_IMAGE_ROOT", new=preview_root):
                 response = self.client.get(
