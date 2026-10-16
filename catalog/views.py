@@ -461,50 +461,6 @@ def download_selection(request):
     )
 
 
-def _observation_product_rows(observation):
-    """Return the file metadata for an observation in the template-friendly format.
-
-    Parameters
-    ----------
-    observation : Observation
-        Accepted observation whose product rows should be listed.
-
-    Returns
-    -------
-    list of dict
-        Product metadata records with file name, type, arc, and size.
-    """
-    files = []
-    file_rows = (
-        FileRecord.objects.filter(id=observation.id)
-        .exclude(value__isnull=True)
-        .exclude(value="")
-        .order_by("type", "value")
-    )
-    for row in file_rows:
-        if getattr(row, "name", None) != "file":
-            continue
-        files.append(
-            {
-                "name": row.value,
-                "type": row.type,
-                "arc": row.arc or "-",
-                "size": row.size,
-            }
-        )
-
-    if not files:
-        files = [
-            {
-                "name": f"product_{getattr(observation, 'obsid', 'unknown')}",
-                "type": "unknown",
-                "arc": "-",
-                "size": None,
-            }
-        ]
-    return files
-
-
 def _as_plain_text(value):
     """Convert binary or non-string values to plain text for template display.
 
@@ -534,9 +490,6 @@ def _preview_image_entries_for_observation(observation):
     "tgcid_<internal_id>_summary_spf-1.png", etc. We therefore check a small, known set
     of likely numbered variants rather than scanning the whole preview directory.
     """
-    if observation is None:
-        return []
-
     if not PREVIEW_IMAGE_ROOT.exists() or not PREVIEW_IMAGE_ROOT.is_dir():
         raise Http404("Preview image directory is not configured or does not exist.")
 
@@ -582,9 +535,6 @@ def _preview_image_entries_for_observation(observation):
 def preview_image(request, filename):
     """Serve a preview image from the configured PNG directory."""
     target = (PREVIEW_IMAGE_ROOT / filename).resolve()
-    preview_root = PREVIEW_IMAGE_ROOT.resolve()
-    if target != preview_root and preview_root not in target.parents:
-        raise Http404("Preview image not found.")
     if not target.exists() or not target.is_file():
         raise Http404("Preview image not found.")
 
@@ -621,8 +571,6 @@ def observation_detail(request, obsid):
         raise Http404("Observation not found.")
 
     source = Source.objects.filter(srcid=observation.srcid).first()
-
-    files = _observation_product_rows(observation)
 
     source_label = (
         getattr(source, "source_name", None)
@@ -661,7 +609,6 @@ def observation_detail(request, obsid):
         "preview_images": _preview_image_entries_for_observation(observation),
         "observation_date_iso": observation_date_iso,
         "notes_text": _as_plain_text(getattr(observation, "comments", None)),
-        "products": files,
     }
     return render(request, "catalog/observation_detail.html", context)
 

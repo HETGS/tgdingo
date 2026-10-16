@@ -198,7 +198,7 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "FAINT")
         self.assertContains(response, "12345")
         self.assertContains(response, "Observation note with plain text output.")
-        self.assertContains(response, "evt2.gz")
+        self.assertContains(response, "Images linked to this observation")
 
     @patch("catalog.views.FileRecord.objects.filter")
     @patch("catalog.views.Source.objects.filter")
