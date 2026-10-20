@@ -103,38 +103,6 @@ SELECT * FROM source LIMIT 3;
 
 If those queries return rows, the import was successful.
 
-## 6) Ignore the legacy `id`-rename steps unless they fail in practice
-
-The older notes contain legacy commands such as:
-
-```sql
-ALTER TABLE spec_prop RENAME COLUMN id TO obsid;
-ALTER TABLE files RENAME COLUMN id TO obsid;
-```
-
-and a long list of `ALTER TABLE ... ADD COLUMN id ... PRIMARY KEY` fixes. For this project, those are not the recommended setup path.
-
-Why:
-
-- the TGCat dump already contains the schema and rows
-- the app uses `managed = False` models and maps to the existing database schema
-- the app is designed to read the nightly TGCat database, not to mutate its schema
-
-Only perform schema-changing steps if a real runtime problem appears.
-
-## 7) Match the Django environment
-
-The project reads the DB connection values from [tgdingo/settings.py](../tgdingo/settings.py) and [.env.example](../.env.example):
-
-```bash
-export TGDINGO_DB_NAME=tgcat
-export TGDINGO_DB_USER=tgcat_reader
-export TGDINGO_DB_PASSWORD='change-me'
-export TGDINGO_DB_HOST=127.0.0.1
-export TGDINGO_DB_PORT=3307
-```
-
-If the DB is being used through the local socket, `localhost` is also acceptable and matches the MySQL user created above. The important part is that the user, password, DB name, and port all match exactly.
 
 ## 8) Validate Django connection
 
