@@ -9,7 +9,9 @@ urlpatterns = [
     path("help/", views.help, name="help"),
     path("download-selection/", views.download_selection, name="download_selection"),
     path(
-        "observation/<int:obsid>/", views.observation_detail, name="observation_detail"
+        "observation/<slug:obsid_slug>/",
+        views.observation_detail,
+        name="observation_detail",
     ),
     path("download/<str:filename>/", views.download_product, name="download"),
     path("preview/<str:filename>/", views.preview_image, name="preview_image"),

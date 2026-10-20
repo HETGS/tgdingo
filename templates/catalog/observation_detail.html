@@ -1,12 +1,12 @@
 {% extends 'catalog/base.html' %}
 
-{% block title %}Observation {{ observation.obsid }} | TGCat{% endblock %}
+{% block title %}Observation {{ observation.obsid }}{% if show_obi and observation.obi is not None %} (OBI: {{ observation.obi }}){% endif %} | TGCat{% endblock %}
 
 {% block content %}
   <section class="detail-header panel">
     <div>
       <p class="eyebrow">Observation overview</p>
-      <h1>Observation {{ observation.obsid }}</h1>
+      <h1>Observation {{ observation.obsid }}{% if show_obi and observation.obi is not None %} (OBI: {{ observation.obi }}){% endif %}</h1>
     </div>
     <div class="header-actions">
       <a class="secondary-button" href="{% url 'catalog:home' %}">Back to home</a>
@@ -18,9 +18,10 @@
       <div>
         <dt>ObsID</dt>
         <dd>
-          <a href="https://cda.harvard.edu/chaser/startViewer.action?obsid={{ observation.obsid }}" target="_blank" rel="noreferrer">
+          <a href="https://cda.harvard.edu/chaser/startViewer.action?obsid={{ observation.obsid }}{% if show_obi and observation.obi is not None %}&obi={{ observation.obi }}{% endif %}" target="_blank" rel="noreferrer">
             {{ observation.obsid }}
           </a>
+          {% if show_obi and observation.obi is not None %} (OBI: {{ observation.obi }}){% endif %}
         </dd>
       </div>
       <div>

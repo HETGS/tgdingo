@@ -95,6 +95,29 @@ def _parse_coordinate(value):
     return None
 
 
+def _observation_detail_slug(obsid, obi=None, obsid_counts=None):
+    """Return the canonical observation detail URL slug for a row."""
+    if obsid is None:
+        return ""
+    if obsid_counts is not None and obsid_counts.get(obsid, 0) > 1:
+        if obi is not None:
+            return f"{obsid}-{obi}"
+    return str(obsid)
+
+
+def _obsid_has_multiple_obi(obsid):
+    """Return whether a given ObsID has more than one distinct OBI value."""
+    if obsid is None:
+        return False
+    obi_values = set(
+        Observation.objects.filter(obsid=obsid)
+        .filter(reject="N")
+        .exclude(obi__isnull=True)
+        .values_list("obi", flat=True)
+    )
+    return len(obi_values) > 1
+
+
 def _observation_result_entries(observations, source=None):
     """Convert observation records into deduplicated result dictionaries.
 
@@ -112,6 +135,10 @@ def _observation_result_entries(observations, source=None):
     """
     results = []
     seen = set()
+    obsid_counts = {}
+    for observation in observations:
+        obsid_counts[observation.obsid] = obsid_counts.get(observation.obsid, 0) + 1
+
     for observation in observations:
         source_for_observation = source
         if source_for_observation is None:
@@ -121,7 +148,7 @@ def _observation_result_entries(observations, source=None):
             assert source_for_observation is not None, (
                 "Observation has no matching source."
             )
-        key = (observation.obsid, observation.srcid)
+        key = (observation.obsid, observation.obi, observation.srcid)
         if key in seen:
             continue
         seen.add(key)
@@ -137,9 +164,14 @@ def _observation_result_entries(observations, source=None):
                 or str(observation.obsid)
             ),
             "observation_id": observation.obsid,
-            "tgcat_id": getattr(observation, "id", None),
-            "instrument": getattr(observation, "instrument", "N/A"),
-            "grating": getattr(observation, "grating", "N/A"),
+            "obi": observation.obi,
+            "show_obi": obsid_counts.get(observation.obsid, 0) > 1,
+            "detail_slug": _observation_detail_slug(
+                observation.obsid, observation.obi, obsid_counts
+            ),
+            "tgcat_id": observation.id,
+            "instrument": observation.instrument,
+            "grating": observation.grating,
             "exposure": observation.exposure,
             "exposure_ks": round(observation.exposure / 1000.0),
             "observation_date_iso": observation_date_iso,
@@ -273,6 +305,7 @@ def _search_results(query: str, radius_deg: float = 0.1):
         key = (
             result.get("name"),
             result.get("observation_id"),
+            result.get("obi"),
             result.get("instrument"),
             result.get("source_id"),
         )
@@ -541,15 +574,15 @@ def preview_image(request, filename):
     return FileResponse(target.open("rb"), content_type="image/png")
 
 
-def observation_detail(request, obsid):
+def observation_detail(request, obsid_slug):
     """Render a single accepted observation with metadata and product links.
 
     Parameters
     ----------
     request : HttpRequest
         Incoming request for a specific observation.
-    obsid : int
-        ObsID to fetch.
+    obsid_slug : str
+        ObsID, optionally suffixed with ``-<obi>`` to disambiguate multiple rows.
 
     Returns
     -------
@@ -561,16 +594,26 @@ def observation_detail(request, obsid):
     Http404
         If no accepted observation with the supplied ID exists.
     """
-    observation = (
+    match = re.fullmatch(r"(\d+)(?:-(\d+))?", str(obsid_slug).strip())
+    if match is None:
+        raise Http404("Observation not found.")
+
+    obsid = int(match.group(1))
+    requested_obi = int(match.group(2)) if match.group(2) is not None else None
+
+    queryset = (
         Observation.objects.filter(obsid=obsid)
         .filter(reject="N")
-        .order_by("id")
-        .first()
+        .order_by("obi", "id")
+    )
+    observation = (
+        queryset.first() if requested_obi is None else queryset.filter(obi=requested_obi).first()
     )
     if observation is None:
         raise Http404("Observation not found.")
 
     source = Source.objects.filter(srcid=observation.srcid).first()
+    show_obi = _obsid_has_multiple_obi(observation.obsid)
 
     source_label = (
         getattr(source, "source_name", None)
@@ -597,6 +640,7 @@ def observation_detail(request, obsid):
         "source": source,
         "target_name": source_label,
         "source_url": source_url,
+        "show_obi": show_obi,
         "coordinates": {
             "ra": getattr(observation, "ra_targ", None)
             if getattr(observation, "ra_targ", None) is not None

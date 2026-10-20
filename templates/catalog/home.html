@@ -52,8 +52,10 @@
                     </td>
                     <td>{{ result.name }}</td>
                     <td data-order="{{ result.observation_id|default:0 }}">
-                      {% if result.observation_id and result.observation_id != "N/A" %}
-                        <a href="{% url 'catalog:observation_detail' result.observation_id %}">{{ result.observation_id }}</a>
+                      {% if result.observation_id and result.observation_id != "N/A" and result.detail_slug %}
+                        <a href="{% url 'catalog:observation_detail' result.detail_slug %}">
+                          {{ result.observation_id }}{% if result.show_obi and result.obi is not None %} (OBI: {{ result.obi }}){% endif %}
+                        </a>
                       {% else %}
                         Unavailable
                       {% endif %}
@@ -65,8 +67,8 @@
                     </td>
                     <td>{{ result.observation_date_iso|default:"Unknown" }}</td>
                     <td>
-                      {% if result.observation_id and result.observation_id != "N/A" %}
-                        <a class="link-button small-button" href="{% url 'catalog:observation_detail' result.observation_id %}">View observation</a>
+                      {% if result.observation_id and result.observation_id != "N/A" and result.detail_slug %}
+                        <a class="link-button small-button" href="{% url 'catalog:observation_detail' result.detail_slug %}">View observation</a>
                       {% endif %}
                     </td>
                   </tr>

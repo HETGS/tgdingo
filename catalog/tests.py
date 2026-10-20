@@ -2,7 +2,7 @@ import datetime
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
@@ -76,8 +76,24 @@ class CatalogSmokeTests(TestCase):
         self, mock_obs_filter, mock_file_filter, mock_source_filter
     ):
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
-            SimpleNamespace(id=101, obsid=10, srcid=1944, instrument="ACIS"),
-            SimpleNamespace(id=202, obsid=11, srcid=1945, instrument="LETGS"),
+            SimpleNamespace(
+                id=101,
+                obsid=10,
+                srcid=1944,
+                instrument="ACIS",
+                grating="NONE",
+                obi=1,
+                exposure=100.0,
+            ),
+            SimpleNamespace(
+                id=202,
+                obsid=11,
+                srcid=1945,
+                instrument="LETGS",
+                grating="HETG",
+                obi=2,
+                exposure=200.0,
+            ),
         ]
         mock_source_filter.return_value.first.side_effect = [
             SimpleNamespace(
@@ -118,6 +134,8 @@ class CatalogSmokeTests(TestCase):
             target="CAPELLA",
             srcid=1944,
             instrument="ACIS",
+            grating="NONE",
+            obi=3,
             exposure=123.45,
             date_obs=OBS_DATE,
             reject="N",
@@ -154,6 +172,8 @@ class CatalogSmokeTests(TestCase):
             target="CAPELLA",
             srcid=1944,
             instrument="ACIS",
+            grating="NONE",
+            obi=4,
             readmode="TIMED",
             datamode="FAINT",
             events=12345,
@@ -199,6 +219,7 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "12345")
         self.assertContains(response, "Observation note with plain text output.")
         self.assertContains(response, "Images linked to this observation")
+        self.assertNotContains(response, "(OBI:")
 
     @patch("catalog.views.FileRecord.objects.filter")
     @patch("catalog.views.Source.objects.filter")
@@ -212,6 +233,8 @@ class CatalogSmokeTests(TestCase):
             target="DUPLICATE",
             srcid=999,
             instrument="LETGS",
+            grating="HETG",
+            obi=1,
             ra=1.0,
             decl=2.0,
             ra_targ=1.1,
@@ -225,6 +248,8 @@ class CatalogSmokeTests(TestCase):
             target="DUPLICATE",
             srcid=999,
             instrument="LETGS",
+            grating="HETG",
+            obi=2,
             ra=3.0,
             decl=4.0,
             ra_targ=3.1,
@@ -252,6 +277,70 @@ class CatalogSmokeTests(TestCase):
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.FileRecord.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
+    def test_detail_route_accepts_obsid_obi_slug_and_defaults_to_first_obi(
+        self, mock_obs_filter, mock_file_filter, mock_source_filter
+    ):
+        rows = [
+            SimpleNamespace(
+                id=20,
+                obsid=5,
+                target="DUPLICATE",
+                srcid=999,
+                instrument="LETGS",
+                grating="HETG",
+                obi=1,
+                ra=1.0,
+                decl=2.0,
+                ra_targ=1.1,
+                dec_targ=2.1,
+                exposure=100.0,
+                date_obs=OBS_DATE,
+            ),
+            SimpleNamespace(
+                id=21,
+                obsid=5,
+                target="DUPLICATE",
+                srcid=999,
+                instrument="LETGS",
+                grating="HETG",
+                obi=2,
+                ra=3.0,
+                decl=4.0,
+                ra_targ=3.1,
+                dec_targ=4.1,
+                exposure=200.0,
+                date_obs=OBS_DATE,
+            ),
+        ]
+        queryset = MagicMock()
+        queryset.first.return_value = rows[0]
+        queryset.filter.return_value.first.return_value = rows[1]
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value = (
+            queryset
+        )
+        mock_source_filter.return_value.first.return_value = SimpleNamespace(
+            srcid=999,
+            source_name="DUPLICATE",
+            simbad_ID="DUPLICATE",
+            ned_ID=None,
+        )
+        mock_file_filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = []
+
+        default_response = self.client.get(
+            reverse("catalog:observation_detail", args=[5])
+        )
+        self.assertEqual(default_response.status_code, 200)
+        self.assertEqual(default_response.context["observation"].obi, 1)
+
+        specific_response = self.client.get(
+            reverse("catalog:observation_detail", args=["5-2"])
+        )
+        self.assertEqual(specific_response.status_code, 200)
+        self.assertEqual(specific_response.context["observation"].obi, 2)
+
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.FileRecord.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
     def test_bulk_download_zips_selected_file_groups(
         self, mock_obs_filter, mock_file_filter, mock_source_filter
     ):
@@ -269,6 +358,10 @@ class CatalogSmokeTests(TestCase):
                 obsid=10,
                 target="CAPELLA",
                 srcid=1944,
+                instrument="ACIS",
+                grating="NONE",
+                obi=1,
+                exposure=100.0,
                 date_obs=OBS_DATE,
             )
             mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
@@ -337,6 +430,8 @@ class CatalogSmokeTests(TestCase):
                 target="CAPELLA",
                 srcid=1944,
                 instrument="ACIS",
+                grating="NONE",
+                obi=9,
                 readmode="TIMED",
                 datamode="FAINT",
                 events=12345,
@@ -379,34 +474,46 @@ class CatalogSmokeTests(TestCase):
         self, mock_obs_filter, mock_source_filter
     ):
         first_obs = SimpleNamespace(
+            id=301,
             obsid=3,
             target="TRAPEZIUM",
             srcid=2959,
             instrument="ACIS",
+            grating="NONE",
+            obi=1,
             exposure=10.0,
             date_obs=OBS_DATE,
         )
         second_obs = SimpleNamespace(
+            id=302,
             obsid=3,
             target="TRAPEZIUM",
             srcid=1618,
             instrument="ACIS",
+            grating="NONE",
+            obi=2,
             exposure=20.0,
             date_obs=OBS_DATE,
         )
         third_obs = SimpleNamespace(
+            id=303,
             obsid=3,
             target="TRAPEZIUM",
             srcid=2972,
             instrument="ACIS",
+            grating="NONE",
+            obi=3,
             exposure=30.0,
             date_obs=OBS_DATE,
         )
         fourth_obs = SimpleNamespace(
+            id=304,
             obsid=3,
             target="TRAPEZIUM",
             srcid=2970,
             instrument="ACIS",
+            grating="NONE",
+            obi=4,
             exposure=40.0,
             date_obs=OBS_DATE,
         )
@@ -436,18 +543,24 @@ class CatalogSmokeTests(TestCase):
         self, mock_obs_filter, mock_source_filter
     ):
         first_obs = SimpleNamespace(
+            id=701,
             obsid=7,
             target="GENERIC TARGET",
             srcid=1,
             instrument="ACIS",
+            grating="NONE",
+            obi=1,
             exposure=7.5,
             date_obs=OBS_DATE,
         )
         second_obs = SimpleNamespace(
+            id=702,
             obsid=7,
             target="GENERIC TARGET",
             srcid=2,
             instrument="ACIS",
+            grating="NONE",
+            obi=2,
             exposure=8.5,
             date_obs=OBS_DATE,
         )
@@ -530,6 +643,8 @@ class CatalogSmokeTests(TestCase):
                 srcid=42,
                 obsid=101,
                 instrument="ACIS",
+                grating="NONE",
+                obi=1,
                 exposure=101.0,
                 date_obs=OBS_DATE,
                 reject="N",
@@ -539,6 +654,8 @@ class CatalogSmokeTests(TestCase):
                 srcid=42,
                 obsid=203,
                 instrument="LETGS",
+                grating="HETG",
+                obi=2,
                 exposure=203.0,
                 date_obs=OBS_DATE,
                 reject="N",
@@ -548,6 +665,8 @@ class CatalogSmokeTests(TestCase):
                 srcid=42,
                 obsid=999,
                 instrument="ACIS",
+                grating="NONE",
+                obi=3,
                 exposure=999.0,
                 date_obs=OBS_DATE,
                 reject="N",
@@ -569,10 +688,13 @@ class CatalogSmokeTests(TestCase):
         self, mock_obs_filter, mock_source_filter
     ):
         observation = SimpleNamespace(
+            id=42,
             obsid=42,
             target="TW Hya",
             srcid=77,
             instrument="ACIS",
+            grating="NONE",
+            obi=7,
             exposure=42.0,
             date_obs=OBS_DATE,
         )
@@ -592,6 +714,67 @@ class CatalogSmokeTests(TestCase):
         self.assertEqual(len(response.context["results"]), 1)
         self.assertEqual(response.context["results"][0]["observation_id"], 42)
         self.assertContains(response, "TW Hya")
+
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_same_obsid_with_different_obi_is_kept_as_separate_result(
+        self, mock_obs_filter, mock_source_filter
+    ):
+        source = SimpleNamespace(
+            srcid=77,
+            source_name="TW Hya",
+            simbad_ID="TW Hya",
+            ned_ID=None,
+            reject="N",
+        )
+        mock_source_filter.return_value = FakeQuerySet([source])
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            SimpleNamespace(
+                id=1,
+                obsid=433,
+                srcid=77,
+                target="TW Hya",
+                instrument="ACIS",
+                grating="NONE",
+                obi=1,
+                exposure=10.0,
+                date_obs=OBS_DATE,
+                reject="N",
+            ),
+            SimpleNamespace(
+                id=2,
+                obsid=433,
+                srcid=77,
+                target="TW Hya",
+                instrument="ACIS",
+                grating="NONE",
+                obi=2,
+                exposure=20.0,
+                date_obs=OBS_DATE,
+                reject="N",
+            ),
+            SimpleNamespace(
+                id=3,
+                obsid=433,
+                srcid=77,
+                target="TW Hya",
+                instrument="ACIS",
+                grating="NONE",
+                obi=3,
+                exposure=30.0,
+                date_obs=OBS_DATE,
+                reject="N",
+            ),
+        ]
+
+        response = self.client.get(reverse("catalog:home") + "?q=433")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.context["results"]), 3)
+        self.assertEqual(
+            {result["obi"] for result in response.context["results"]},
+            {1, 2, 3},
+        )
 
     @patch("catalog.views._coordinate_search_results")
     @patch("catalog.views.SkyCoord.from_name")
@@ -625,6 +808,8 @@ class CatalogSmokeTests(TestCase):
                 srcid=1000 + index,
                 obsid=2000 + index,
                 instrument="ACIS",
+                grating="NONE",
+                obi=index + 1,
                 exposure=float(index + 1),
                 date_obs=OBS_DATE,
                 reject="N",
@@ -700,6 +885,8 @@ class CatalogSmokeTests(TestCase):
                     srcid=42,
                     obsid=5,
                     instrument="ACIS",
+                    grating="NONE",
+                    obi=1,
                     exposure=5.0,
                     date_obs=OBS_DATE,
                     reject="N",
@@ -709,6 +896,8 @@ class CatalogSmokeTests(TestCase):
                     srcid=42,
                     obsid=6443,
                     instrument="LETGS",
+                    grating="HETG",
+                    obi=2,
                     exposure=6443.0,
                     date_obs=OBS_DATE,
                     reject="N",
@@ -718,6 +907,8 @@ class CatalogSmokeTests(TestCase):
                     srcid=42,
                     obsid=7435,
                     instrument="ACIS",
+                    grating="NONE",
+                    obi=3,
                     exposure=7435.0,
                     date_obs=OBS_DATE,
                     reject="N",
