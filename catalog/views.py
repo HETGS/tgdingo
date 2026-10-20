@@ -388,6 +388,20 @@ def _selected_observation_display_name(observation_id):
     return f"(ObsID: {observation.obsid}, {source.source_name})"
 
 
+def _selected_observation_plot_label(observation_id):
+    """Render the plot-selection label, including OBI only when required."""
+    observation = (
+        Observation.objects.filter(id=observation_id).filter(reject="N").first()
+    )
+    if observation is None:
+        return f"ObsID: {observation_id}"
+    if getattr(observation, "obi", None) is not None and _obsid_has_multiple_obi(
+        observation.obsid
+    ):
+        return f"ObsID: {observation.obsid} (OBI: {observation.obi})"
+    return f"ObsID: {observation.obsid}"
+
+
 def _build_download_zip(selected_obsids, selected_categories):
     """Create a zip archive of all matching TGCat files for the selected observations."""
     archive_buffer = io.BytesIO()
@@ -490,6 +504,24 @@ def download_selection(request):
             "selected_obs_labels": selected_obs_labels,
             "selected_categories": selected_categories,
             "download_options": DOWNLOAD_DATA_OPTIONS,
+        },
+    )
+
+
+def plot_selection(request):
+    """Render a placeholder plotting page for the currently selected observations."""
+    raw_obsids = request.GET.getlist("obsids") + request.POST.getlist("obsids")
+    selected_obsids = _normalized_obsid_list(raw_obsids)
+    selected_obs_labels = [
+        _selected_observation_plot_label(obsid) for obsid in selected_obsids
+    ]
+
+    return render(
+        request,
+        "catalog/plot_selection.html",
+        {
+            "selected_obsids": selected_obsids,
+            "selected_obs_labels": selected_obs_labels,
         },
     )
 

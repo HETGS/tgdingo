@@ -21,6 +21,7 @@
     <form id="download-selection-form" method="get" action="{% url 'catalog:download_selection' %}">
       <div class="selection-actions">
         <button id="bulk-download-button" type="submit" disabled>Download products</button>
+        <button id="plot-selection-button" type="button" disabled>Plot</button>
         <span id="selection-count" class="muted-note">0 selected</span>
       </div>
 
@@ -98,11 +99,14 @@
     document.addEventListener('DOMContentLoaded', function () {
       const form = document.getElementById('download-selection-form');
       const button = document.getElementById('bulk-download-button');
+      const plotButton = document.getElementById('plot-selection-button');
       const countLabel = document.getElementById('selection-count');
+      const plotSelectionUrl = '{% url "catalog:plot_selection" %}';
 
       function updateSelectionState() {
         const checked = Array.from(document.querySelectorAll('#results-table input[type="checkbox"]:checked'));
         button.disabled = checked.length === 0;
+        plotButton.disabled = checked.length === 0;
         countLabel.textContent = checked.length === 1 ? '1 selected' : checked.length + ' selected';
       }
 
@@ -133,6 +137,19 @@
       document.querySelectorAll('#results-table input[type="checkbox"]').forEach(function (checkbox) {
         checkbox.addEventListener('change', updateSelectionState);
       });
+
+      if (plotButton) {
+        plotButton.addEventListener('click', function () {
+          const checkedBoxes = Array.from(document.querySelectorAll('#results-table input[type="checkbox"]:checked'));
+          if (checkedBoxes.length === 0) {
+            return;
+          }
+          const params = checkedBoxes.map(function (box) {
+            return 'obsids=' + encodeURIComponent(box.value);
+          }).join('&');
+          window.location.href = plotSelectionUrl + '?' + params;
+        });
+      }
 
       if (form) {
         form.addEventListener('submit', function (event) {

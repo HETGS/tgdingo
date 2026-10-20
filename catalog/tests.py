@@ -125,6 +125,44 @@ class CatalogSmokeTests(TestCase):
 
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
+    def test_plot_selection_page_lists_selected_observations(
+        self, mock_obs_filter, mock_source_filter
+    ):
+        mock_obs_filter.return_value.filter.return_value.first.side_effect = [
+            SimpleNamespace(
+                id=10,
+                obsid=10,
+                srcid=1944,
+                obi=1,
+                target="CAPELLA",
+                reject="N",
+            ),
+            SimpleNamespace(
+                id=11,
+                obsid=11,
+                srcid=1945,
+                obi=2,
+                target="CASTOR",
+                reject="N",
+            ),
+        ]
+        mock_source_filter.return_value.first.side_effect = [
+            SimpleNamespace(srcid=1944, source_name="CAPELLA"),
+            SimpleNamespace(srcid=1945, source_name="CASTOR"),
+        ]
+
+        response = self.client.get(
+            reverse("catalog:plot_selection") + "?obsids=10&obsids=11"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Plot selected observations")
+        self.assertContains(response, "ObsID: 10")
+        self.assertContains(response, "ObsID: 11")
+        self.assertContains(response, "Ready to plot")
+
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
     def test_search_finds_observation_by_obsid(
         self, mock_obs_filter, mock_source_filter
     ):
