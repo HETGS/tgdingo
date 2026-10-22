@@ -2,11 +2,11 @@ import datetime
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 OBS_DATE = datetime.datetime(2024, 1, 2, 3, 4, 5)
@@ -45,6 +45,111 @@ class FakeQuerySet:
 
     def __or__(self, other):
         return FakeQuerySet(list(self.rows) + list(other))
+
+
+class SpectralPlotUnitTests(SimpleTestCase):
+    @patch("catalog.views.sherpa_plot.backend.as_html", return_value="<plot>")
+    @patch("catalog.views.sherpa_plot.set_backend")
+    @patch("catalog.views.DataPHAPlot")
+    @patch("catalog.views.read_rmf", side_effect=["rmf-heg", "rmf-meg"])
+    @patch("catalog.views.read_arf", side_effect=["arf-heg", "arf-meg"])
+    @patch("catalog.views.read_pha")
+    @patch("catalog.views._file_record_path")
+    @patch("catalog.views.FileRecord.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_plot_overlays_each_spectrum_with_its_matching_responses(
+        self,
+        mock_observation_filter,
+        mock_file_filter,
+        mock_file_path,
+        mock_read_pha,
+        mock_read_arf,
+        mock_read_rmf,
+        mock_plot_class,
+        mock_set_backend,
+        mock_as_html,
+    ):
+        from pathlib import Path
+
+        first_spectrum = SimpleNamespace(
+            header={"TG_M": -1, "TG_PART": 1},
+            set_response=MagicMock(),
+            set_analysis=MagicMock(),
+        )
+        second_spectrum = SimpleNamespace(
+            header={"TG_M": 1, "TG_PART": 2},
+            set_response=MagicMock(),
+            set_analysis=MagicMock(),
+        )
+        mock_observation_filter.return_value.filter.return_value.first.return_value = (
+            SimpleNamespace(id=123)
+        )
+        mock_file_filter.return_value.filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.first.return_value = SimpleNamespace(
+            value="pha2.gz", arc="arcA"
+        )
+        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: (
+            Path("/data") / arc / file_type / f"tgcid_{observation_id}_{value}"
+        )
+        mock_read_pha.return_value = [first_spectrum, second_spectrum]
+        mock_plot = mock_plot_class.return_value
+
+        from catalog import views
+
+        backend_figure = object()
+        with patch.object(
+            views.sherpa_plot.backend,
+            "current_fig",
+            backend_figure,
+            create=True,
+        ):
+            result = views._render_spectral_plot_html(123)
+
+        self.assertEqual(result, "<plot>")
+        mock_as_html.assert_called_once()
+        with patch.object(
+            views.sherpa_plot.backend,
+            "current_fig",
+            backend_figure,
+            create=True,
+        ):
+            self.assertIs(mock_as_html.call_args.args[0](), backend_figure)
+        self.assertEqual(
+            mock_read_arf.call_args_list,
+            [
+                call("/data/arcA/arf/tgcid_123_heg_-1.arf.gz"),
+                call("/data/arcA/arf/tgcid_123_meg_1.arf.gz"),
+            ],
+        )
+        self.assertEqual(
+            mock_read_rmf.call_args_list,
+            [
+                call("/data/arcA/rmf/tgcid_123_heg_-1.rmf.gz"),
+                call("/data/arcA/rmf/tgcid_123_meg_1.rmf.gz"),
+            ],
+        )
+        first_spectrum.set_response.assert_called_once_with("arf-heg", "rmf-heg")
+        second_spectrum.set_response.assert_called_once_with("arf-meg", "rmf-meg")
+        self.assertEqual(
+            mock_plot.prepare.call_args_list,
+            [call(first_spectrum), call(second_spectrum)],
+        )
+        self.assertEqual(
+            mock_plot.plot.call_args_list,
+            [
+                call(
+                    label="HEG -1",
+                    linestyle="-",
+                    marker=None,
+                    overplot=False,
+                ),
+                call(
+                    label="MEG 1",
+                    linestyle="-",
+                    marker=None,
+                    overplot=True,
+                ),
+            ],
+        )
 
 
 class CatalogSmokeTests(TestCase):

@@ -13,12 +13,9 @@ from django.db import DatabaseError
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import render
 
-try:
-    from sherpa.astro import ui
-    import sherpa.plot as sherpa_plot
-except Exception:  # pragma: no cover - optional environment support
-    ui = None
-    sherpa_plot = None
+from sherpa.astro.io import read_arf, read_pha, read_rmf
+from sherpa.astro.plot import DataPHAPlot
+import sherpa.plot as sherpa_plot
 
 from .models import FileRecord, Observation, Source
 
@@ -44,6 +41,7 @@ DOWNLOAD_DATA_OPTIONS = {
     "obspar": ["obspar"],
     "Event files (evt2)": ["evt2"],
 }
+TG_PART = {1: "HEG", 2: "MEG", 3: "LEG"}
 
 
 def _parse_coordinate(value):
@@ -428,91 +426,72 @@ def _file_record_path(observation_id, file_type, value, arc_name=None):
 
 def _render_spectral_plot_html(observation_id):
     """Render a Bokeh plot for the selected observation using Sherpa and TGCat metadata."""
-    if ui is None or sherpa_plot is None:
-        raise RuntimeError("Sherpa is not available in this environment.")
-
     observation = (
         Observation.objects.filter(id=observation_id).filter(reject="N").first()
     )
     if observation is None:
         raise ValueError(f"Observation {observation_id} was not found.")
 
-    file_rows = (
+    files = (
         FileRecord.objects.filter(id=observation.id)
         .filter(name="file")
+        .filter(type="pha2")
         .exclude(value__isnull=True)
         .exclude(value="")
-        .order_by("arc", "type", "value")
-        .all()
+        .first()
     )
+    if files is None:
+        raise ValueError(f"No valid pha2 file found for observation {observation_id}.")
+    value = str(getattr(files, "value", "") or "").strip()
+    arc_name = str(getattr(files, "arc", "") or "").strip()
+    path = _file_record_path(observation.id, "pha2", value, arc_name)
+    if path is None:
+        raise ValueError(f"PHA2 file is missing for observation {observation_id}.")
 
-    pha2_paths = []
-    arf_paths = []
-    rmf_paths = []
-    for row in file_rows:
-        file_type = str(getattr(row, "type", "") or "").strip().lower()
-        value = str(getattr(row, "value", "") or "").strip()
-        arc_name = str(getattr(row, "arc", "") or "").strip()
-        if not value:
+    phalist = read_pha(str(path))
+    spectra = []
+    for pha in phalist:
+        tg_m = int(pha.header["TG_M"])
+        tg_part = int(pha.header["TG_PART"])
+        if abs(tg_m) > 1:
             continue
+        part_name = TG_PART[tg_part]
+        arf_path = _file_record_path(
+            observation.id,
+            "arf",
+            f"{part_name.lower()}_{tg_m}.arf.gz",
+            arc_name,
+        )
+        rmf_path = _file_record_path(
+            observation.id,
+            "rmf",
+            f"{part_name.lower()}_{tg_m}.rmf.gz",
+            arc_name,
+        )
+        if arf_path is None or rmf_path is None:
+            raise ValueError(
+                f"ARF or RMF response is missing for {part_name} {tg_m} "
+                f"in observation {observation_id}."
+            )
 
-        if file_type == "pha2":
-            if "bg" in value.lower():
-                continue
-            path = _file_record_path(observation.id, "pha2", value, arc_name)
-            if path is not None:
-                pha2_paths.append(path)
-            continue
+        arf = read_arf(str(arf_path))
+        rmf = read_rmf(str(rmf_path))
+        pha.set_response(arf, rmf)
+        pha.set_analysis("wave")
+        spectra.append((part_name, tg_m, pha))
 
-        if file_type == "arf":
-            order = _spectral_order_from_filename(value)
-            if order in {"-1", "1"}:
-                path = _file_record_path(observation.id, "arf", value, arc_name)
-                if path is not None:
-                    arf_paths.append(path)
-            continue
-
-        if file_type == "rmf":
-            order = _spectral_order_from_filename(value)
-            if order in {"-1", "1"}:
-                path = _file_record_path(observation.id, "rmf", value, arc_name)
-                if path is not None:
-                    rmf_paths.append(path)
-
-    if not pha2_paths:
-        raise ValueError(f"No PHA2 product was found for observation {observation_id}.")
-
-    if not arf_paths and not rmf_paths:
-        for row in file_rows:
-            file_type = str(getattr(row, "type", "") or "").strip().lower()
-            value = str(getattr(row, "value", "") or "").strip()
-            arc_name = str(getattr(row, "arc", "") or "").strip()
-            if file_type == "arf":
-                path = _file_record_path(observation.id, "arf", value, arc_name)
-                if path is not None:
-                    arf_paths.append(path)
-            elif file_type == "rmf":
-                path = _file_record_path(observation.id, "rmf", value, arc_name)
-                if path is not None:
-                    rmf_paths.append(path)
-
-    pha2_path = sorted(set(pha2_paths))[0]
-    arf_paths = sorted(set(arf_paths))
-    rmf_paths = sorted(set(rmf_paths))
-
-    ui.clean()
     sherpa_plot.set_backend("BokehBackend")
-    dataset_id = 1
-    ui.load_pha(dataset_id, str(pha2_path), use_errors=True)
-    for arf_path in arf_paths:
-        ui.load_arf(dataset_id, str(arf_path), resp_id=dataset_id)
-    for rmf_path in rmf_paths:
-        ui.load_rmf(dataset_id, str(rmf_path), resp_id=dataset_id)
+    dataplot = DataPHAPlot()
+    for i, (part_name, tg_m, pha) in enumerate(spectra):
+        dataplot.prepare(pha)
+        dataplot.plot(
+            label=f"{part_name} {tg_m}",
+            linestyle="-",
+            marker=None,
+            overplot=i != 0,
+        )
 
-    ui.set_analysis("wave")
-    ui.plot_data(dataset_id)
-    plot = ui.get_data_plot(dataset_id)
-    return sherpa_plot.backend.as_html_plot(plot)
+    return sherpa_plot.backend.as_html(lambda: sherpa_plot.backend.current_fig)
 
 
 def _build_download_zip(selected_obsids, selected_categories):
