@@ -101,7 +101,7 @@
       const button = document.getElementById('bulk-download-button');
       const plotButton = document.getElementById('plot-selection-button');
       const countLabel = document.getElementById('selection-count');
-      const plotSelectionUrl = '{% url "catalog:plot_selection" %}';
+      const plotSelectionUrl = '{% url "catalog:plot_spectrum" %}';
 
       function updateSelectionState() {
         const checked = Array.from(document.querySelectorAll('#results-table input[type="checkbox"]:checked'));

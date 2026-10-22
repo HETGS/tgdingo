@@ -9,6 +9,8 @@ from astropy.coordinates import SkyCoord
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
+from catalog.forms import PlotSelectionForm
+
 OBS_DATE = datetime.datetime(2024, 1, 2, 3, 4, 5)
 
 
@@ -48,6 +50,26 @@ class FakeQuerySet:
 
 
 class SpectralPlotUnitTests(SimpleTestCase):
+    def test_renderer_rejects_untrusted_grouping_arguments_before_database_access(self):
+        from catalog.views import _render_spectral_plot_html
+
+        invalid_arguments = (
+            ("group_counts", 0),
+            ("group_width", 1.5),
+            ("group_snr", float("nan")),
+            ("group_snr", float("inf")),
+            ("unknown_grouping", 1),
+        )
+        with patch("catalog.views.Observation.objects.filter") as mock_filter:
+            for method, value in invalid_arguments:
+                with self.subTest(method=method, value=value):
+                    with self.assertRaises(ValueError):
+                        _render_spectral_plot_html(
+                            123, "wavelength", method, value
+                        )
+
+        mock_filter.assert_not_called()
+
     @patch("catalog.views.sherpa_plot.backend.as_html", return_value="<plot>")
     @patch("catalog.views.sherpa_plot.set_backend")
     @patch("catalog.views.DataPHAPlot")
@@ -75,14 +97,16 @@ class SpectralPlotUnitTests(SimpleTestCase):
             header={"TG_M": -1, "TG_PART": 1},
             set_response=MagicMock(),
             set_analysis=MagicMock(),
+            group_counts=MagicMock(),
         )
         second_spectrum = SimpleNamespace(
             header={"TG_M": 1, "TG_PART": 2},
             set_response=MagicMock(),
             set_analysis=MagicMock(),
+            group_counts=MagicMock(),
         )
         mock_observation_filter.return_value.filter.return_value.first.return_value = (
-            SimpleNamespace(id=123)
+            SimpleNamespace(id=123, obsid=873)
         )
         mock_file_filter.return_value.filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.first.return_value = SimpleNamespace(
             value="pha2.gz", arc="arcA"
@@ -95,16 +119,20 @@ class SpectralPlotUnitTests(SimpleTestCase):
 
         from catalog import views
 
-        backend_figure = object()
+        bokeh_figure = SimpleNamespace(width=None, height=None, sizing_mode=None)
+        backend_figure = SimpleNamespace(children=[(bokeh_figure, 0, 0)])
         with patch.object(
             views.sherpa_plot.backend,
             "current_fig",
             backend_figure,
             create=True,
         ):
-            result = views._render_spectral_plot_html(123)
+            result = views._render_spectral_plot_html(123, "channel", "group_counts", 8)
 
         self.assertEqual(result, "<plot>")
+        self.assertEqual(bokeh_figure.width, 960)
+        self.assertEqual(bokeh_figure.height, 540)
+        self.assertIsNone(bokeh_figure.sizing_mode)
         mock_as_html.assert_called_once()
         with patch.object(
             views.sherpa_plot.backend,
@@ -129,6 +157,10 @@ class SpectralPlotUnitTests(SimpleTestCase):
         )
         first_spectrum.set_response.assert_called_once_with("arf-heg", "rmf-heg")
         second_spectrum.set_response.assert_called_once_with("arf-meg", "rmf-meg")
+        first_spectrum.set_analysis.assert_called_once_with("channel")
+        second_spectrum.set_analysis.assert_called_once_with("channel")
+        first_spectrum.group_counts.assert_called_once_with(8)
+        second_spectrum.group_counts.assert_called_once_with(8)
         self.assertEqual(
             mock_plot.prepare.call_args_list,
             [call(first_spectrum), call(second_spectrum)],
@@ -150,6 +182,104 @@ class SpectralPlotUnitTests(SimpleTestCase):
                 ),
             ],
         )
+        self.assertEqual(mock_plot.title, "ObsID 873")
+
+
+class PlotSelectionViewTests(SimpleTestCase):
+    @patch("catalog.views._render_spectral_plot_html", return_value="<plot>")
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_replot_form_defaults_to_wavelength_and_posts_selected_mode(
+        self, mock_observation_filter, mock_source_filter, mock_render_plot
+    ):
+        mock_observation_filter.return_value.filter.return_value.first.return_value = (
+            SimpleNamespace(id=42, obsid=873, obi=None, reject="N")
+        )
+        mock_source_filter.return_value.first.return_value = SimpleNamespace(
+            source_name="CAPELLA"
+        )
+
+        get_response = self.client.get("/plot-spectrum/?obsids=42")
+        self.assertEqual(get_response.status_code, 200)
+        self.assertContains(get_response, 'value="wavelength" selected')
+        mock_render_plot.assert_called_once_with(42, "wavelength", None, None)
+
+        post_response = self.client.post(
+            "/plot-spectrum/", {"obsids": "42", "analysis": "energy"}
+        )
+        self.assertEqual(post_response.status_code, 200)
+        self.assertContains(post_response, 'value="energy" selected')
+        self.assertEqual(
+            mock_render_plot.call_args_list,
+            [
+                call(42, "wavelength", None, None),
+                call(42, "energy", None, None),
+            ],
+        )
+
+        grouped_response = self.client.post(
+            "/plot-spectrum/",
+            {
+                "obsids": "42",
+                "analysis": "channel",
+                "grouping_method": "group_snr",
+                "snr": "0.75",
+            },
+        )
+        self.assertEqual(grouped_response.status_code, 200)
+        mock_render_plot.assert_called_with(42, "channel", "group_snr", 0.75)
+
+        call_count = mock_render_plot.call_count
+        invalid_response = self.client.post(
+            "/plot-spectrum/",
+            {
+                "obsids": "42",
+                "analysis": "channel",
+                "grouping_method": "group_counts",
+                "num": "0",
+            },
+        )
+        self.assertEqual(invalid_response.status_code, 200)
+        self.assertContains(invalid_response, "greater than or equal to 1")
+        self.assertEqual(mock_render_plot.call_count, call_count)
+
+
+class GroupingFormTests(SimpleTestCase):
+    def test_grouping_methods_validate_their_parameter(self):
+        valid_inputs = (
+            {"grouping_method": "group_adapt", "min": "5"},
+            {"grouping_method": "group_adapt_snr", "min": "1"},
+            {"grouping_method": "group_bins", "num": "10"},
+            {"grouping_method": "group_counts", "num": "20"},
+            {"grouping_method": "group_snr", "snr": "2.5"},
+            {"grouping_method": "group_width", "num": "4"},
+        )
+        for grouping in valid_inputs:
+            with self.subTest(grouping=grouping):
+                form = PlotSelectionForm({"analysis": "wavelength", **grouping})
+                self.assertTrue(form.is_valid(), form.errors)
+
+    def test_grouping_parameters_must_be_positive(self):
+        invalid_inputs = (
+            {"grouping_method": "group_adapt", "min": "0"},
+            {"grouping_method": "group_counts", "num": "-1"},
+            {"grouping_method": "group_snr", "snr": "0"},
+            {"grouping_method": "group_snr", "snr": "-0.5"},
+            {"grouping_method": "group_snr", "snr": "nan"},
+            {"grouping_method": "group_snr", "snr": "inf"},
+            {"grouping_method": "group_snr", "snr": "not-a-number"},
+        )
+        for grouping in invalid_inputs:
+            with self.subTest(grouping=grouping):
+                form = PlotSelectionForm({"analysis": "wavelength", **grouping})
+                self.assertFalse(form.is_valid())
+
+    def test_selected_method_requires_its_parameter(self):
+        form = PlotSelectionForm(
+            {"analysis": "energy", "grouping_method": "group_bins"}
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("num", form.errors)
 
 
 class CatalogSmokeTests(TestCase):
@@ -262,11 +392,25 @@ class CatalogSmokeTests(TestCase):
             SimpleNamespace(type="rmf", name="file", arc="arcA", value="leg_-1.rmf.gz"),
         ]
 
-        response = self.client.get(reverse("catalog:plot_selection") + "?obsids=42")
+        response = self.client.get(reverse("catalog:plot_spectrum") + "?obsids=42")
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Bokeh plot")
         self.assertContains(response, "Selected observation")
+        self.assertContains(response, 'value="wavelength" selected')
+        mock_render_plot.assert_called_once_with(42, "wavelength")
+
+        response = self.client.post(
+            reverse("catalog:plot_spectrum"),
+            {"obsids": "42", "analysis": "channel"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="channel" selected')
+        self.assertEqual(
+            mock_render_plot.call_args_list,
+            [call(42, "wavelength"), call(42, "channel")],
+        )
 
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
@@ -297,7 +441,7 @@ class CatalogSmokeTests(TestCase):
         ]
 
         response = self.client.get(
-            reverse("catalog:plot_selection") + "?obsids=10&obsids=11"
+            reverse("catalog:plot_spectrum") + "?obsids=10&obsids=11"
         )
 
         self.assertEqual(response.status_code, 200)

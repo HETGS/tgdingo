@@ -8,7 +8,7 @@ urlpatterns = [
     path("", views.home, name="home"),
     path("help/", views.help, name="help"),
     path("download-selection/", views.download_selection, name="download_selection"),
-    path("plot-selection/", views.plot_selection, name="plot_selection"),
+    path("plot-spectrum/", views.plot_selection, name="plot_spectrum"),
     path(
         "observation/<slug:obsid_slug>/",
         views.observation_detail,

@@ -13,6 +13,7 @@ from django.db import DatabaseError
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import render
 
+from .forms import GROUPING_PARAMETER, PlotSelectionForm, validate_grouping
 from sherpa.astro.io import read_arf, read_pha, read_rmf
 from sherpa.astro.plot import DataPHAPlot
 import sherpa.plot as sherpa_plot
@@ -42,6 +43,7 @@ DOWNLOAD_DATA_OPTIONS = {
     "Event files (evt2)": ["evt2"],
 }
 TG_PART = {1: "HEG", 2: "MEG", 3: "LEG"}
+PLOT_ANALYSIS_MODES = ("wavelength", "channel", "energy")
 
 
 def _parse_coordinate(value):
@@ -424,8 +426,13 @@ def _file_record_path(observation_id, file_type, value, arc_name=None):
     return None
 
 
-def _render_spectral_plot_html(observation_id):
+def _render_spectral_plot_html(
+    observation_id, analysis="wavelength", grouping_method=None, grouping_value=None
+):
     """Render a Bokeh plot for the selected observation using Sherpa and TGCat metadata."""
+    grouping_method, grouping_value = validate_grouping(
+        grouping_method, grouping_value
+    )
     observation = (
         Observation.objects.filter(id=observation_id).filter(reject="N").first()
     )
@@ -477,13 +484,16 @@ def _render_spectral_plot_html(observation_id):
         arf = read_arf(str(arf_path))
         rmf = read_rmf(str(rmf_path))
         pha.set_response(arf, rmf)
-        pha.set_analysis("wave")
+        pha.set_analysis(analysis)
+        if grouping_method in GROUPING_PARAMETER:
+            getattr(pha, grouping_method)(grouping_value)
         spectra.append((part_name, tg_m, pha))
 
     sherpa_plot.set_backend("BokehBackend")
     dataplot = DataPHAPlot()
     for i, (part_name, tg_m, pha) in enumerate(spectra):
         dataplot.prepare(pha)
+        dataplot.title = f"ObsID {observation.obsid}"
         dataplot.plot(
             label=f"{part_name} {tg_m}",
             linestyle="-",
@@ -491,7 +501,14 @@ def _render_spectral_plot_html(observation_id):
             overplot=i != 0,
         )
 
-    return sherpa_plot.backend.as_html(lambda: sherpa_plot.backend.current_fig)
+    # Since the can't control the default Bokeh figure size from Sherpa,
+    # we manually resize the figure here to a rectangular format that should work on most screens.
+    figure_grid = sherpa_plot.backend.current_fig
+    for figure, _, _ in figure_grid.children:
+        figure.width = 960
+        figure.height = 540
+
+    return sherpa_plot.backend.as_html(lambda: figure_grid)
 
 
 def _build_download_zip(selected_obsids, selected_categories):
@@ -601,12 +618,29 @@ def plot_selection(request):
     selected_obs_labels = [
         _selected_observation_plot_label(obsid) for obsid in selected_obsids
     ]
+    is_post = request.method == "POST"
+    if is_post:
+        plot_form = PlotSelectionForm(request.POST)
+        form_is_valid = plot_form.is_valid()
+        cleaned_data = plot_form.cleaned_data if form_is_valid else {}
+    else:
+        plot_form = PlotSelectionForm(initial={"analysis": "wavelength"})
+        form_is_valid = True
+        cleaned_data = {"analysis": "wavelength", "grouping_method": ""}
+    analysis = cleaned_data.get("analysis", "wavelength")
 
     plot_html = None
     plot_error = None
-    if len(selected_obsids) == 1:
+    if len(selected_obsids) == 1 and form_is_valid:
         try:
-            plot_html = _render_spectral_plot_html(selected_obsids[0])
+            grouping_method = cleaned_data.get("grouping_method") or None
+            grouping_parameter = GROUPING_PARAMETER.get(grouping_method)
+            plot_html = _render_spectral_plot_html(
+                selected_obsids[0],
+                analysis,
+                grouping_method,
+                cleaned_data.get(grouping_parameter) if grouping_parameter else None,
+            )
         except Exception as exc:  # pragma: no cover - runtime-only safeguard
             plot_error = str(exc)
 
@@ -616,6 +650,9 @@ def plot_selection(request):
         {
             "selected_obsids": selected_obsids,
             "selected_obs_labels": selected_obs_labels,
+            "analysis": analysis,
+            "plot_analysis_modes": PLOT_ANALYSIS_MODES,
+            "plot_form": plot_form,
             "plot_html": plot_html,
             "plot_error": plot_error,
         },

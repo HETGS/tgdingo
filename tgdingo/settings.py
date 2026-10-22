@@ -71,7 +71,7 @@ else:
             "ENGINE": "django.db.backends.mysql",
             "NAME": os.environ.get("TGDINGO_DB_NAME", "tgcat"),
             "USER": os.environ.get("TGDINGO_DB_USER", "tgcat_reader"),
-            "PASSWORD": os.environ.get("TGDINGO_DB_PASSWORD", ""),
+            "PASSWORD": os.environ.get("TGDINGO_DB_PASSWORD", "change-me"),
             "HOST": os.environ.get("TGDINGO_DB_HOST", "127.0.0.1"),
             "PORT": os.environ.get("TGDINGO_DB_PORT", "3307"),
             "OPTIONS": {"charset": "utf8mb4"},
