@@ -60,21 +60,9 @@ class PlotSelectionForm(forms.Form):
         required=False,
         widget=forms.Select(attrs={"id": "grouping-method"}),
     )
-    num = forms.IntegerField(
+    group_value = forms.CharField(
         required=False,
-        min_value=1,
-        widget=forms.NumberInput(attrs={"min": "1", "step": "1", "id": "group-num"}),
-    )
-    min = forms.IntegerField(
-        required=False,
-        min_value=1,
-        widget=forms.NumberInput(attrs={"min": "1", "step": "1", "id": "group-min"}),
-    )
-    snr = forms.FloatField(
-        required=False,
-        widget=forms.NumberInput(
-            attrs={"min": "0", "step": "any", "id": "group-snr"}
-        ),
+        widget=forms.NumberInput(attrs={"min": "0", "step": "any", "id": "group-value"}),
     )
 
     def clean(self):
@@ -84,11 +72,20 @@ class PlotSelectionForm(forms.Form):
         if parameter is None:
             return cleaned_data
 
-        value = cleaned_data.get(parameter)
-        if parameter in self.errors:
+        raw_value = cleaned_data.get("group_value")
+        if not raw_value:
+            self.add_error("group_value", "Enter a value for the selected grouping method.")
             return cleaned_data
+
         try:
+            value = float(raw_value) if parameter == "snr" else int(raw_value)
             validate_grouping(method, value)
-        except ValueError as exc:
-            self.add_error(parameter, str(exc))
+        except (TypeError, ValueError, OverflowError) as exc:
+            message = str(exc) or (
+                "Enter a positive number." if parameter == "snr"
+                else "Enter a positive integer."
+            )
+            self.add_error("group_value", message)
+        else:
+            cleaned_data["group_value"] = value
         return cleaned_data

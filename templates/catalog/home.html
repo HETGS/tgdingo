@@ -145,7 +145,7 @@
             return;
           }
           const params = checkedBoxes.map(function (box) {
-            return 'obsids=' + encodeURIComponent(box.value);
+            return 'tgcat_ids=' + encodeURIComponent(box.value);
           }).join('&');
           window.location.href = plotSelectionUrl + '?' + params;
         });

@@ -19,12 +19,12 @@
     {% endif %}
   </section>
 
-  {% if selected_obsids|length == 1 %}
+  {% if selected_tgcat_ids|length == 1 %}
     <section class="panel">
       <h2>Plot settings</h2>
       <form method="post" action="{% url 'catalog:plot_spectrum' %}" class="plot-controls" id="plot-settings-form">
         {% csrf_token %}
-        <input type="hidden" name="obsids" value="{{ selected_obsids.0 }}" />
+        <input type="hidden" name="tgcat_ids" value="{{ selected_tgcat_ids.0 }}" />
 
         <div class="plot-control-field">
           <label for="analysis">X-axis units</label>
@@ -36,20 +36,10 @@
           {{ plot_form.grouping_method }}
           {{ plot_form.grouping_method.errors }}
         </div>
-        <div class="plot-control-field" data-group-parameter="num" hidden>
-          <label for="group-num">Number of channels or bins</label>
-          {{ plot_form.num }}
-          {{ plot_form.num.errors }}
-        </div>
-        <div class="plot-control-field" data-group-parameter="min" hidden>
-          <label for="group-min">Minimum counts / SNR</label>
-          {{ plot_form.min }}
-          {{ plot_form.min.errors }}
-        </div>
-        <div class="plot-control-field" data-group-parameter="snr" hidden>
-          <label for="group-snr">Minimum signal-to-noise ratio</label>
-          {{ plot_form.snr }}
-          {{ plot_form.snr.errors }}
+        <div class="plot-control-field" id="group-value-field" hidden>
+          <label for="group-value" id="group-value-label">Grouping value</label>
+          {{ plot_form.group_value }}
+          {{ plot_form.group_value.errors }}
         </div>
         <button type="submit" class="primary-button">Replot</button>
       </form>
@@ -66,7 +56,7 @@
         {{ plot_html|safe }}
       </div>
     </section>
-  {% elif selected_obsids %}
+  {% elif selected_tgcat_ids %}
     <section class="panel">
       <h2>Selected observations</h2>
       <p class="muted-note">Ready to plot: {{ selected_obs_labels|join:", " }}</p>
@@ -96,30 +86,37 @@
     const plotForm = document.getElementById("plot-settings-form");
     if (plotForm) {
       const methodSelect = plotForm.querySelector("#grouping-method");
-      const parameterGroups = plotForm.querySelectorAll("[data-group-parameter]");
-      const snrInput = plotForm.querySelector("#group-snr");
+      const valueField = plotForm.querySelector("#group-value-field");
+      const valueLabel = plotForm.querySelector("#group-value-label");
+      const valueInput = plotForm.querySelector("#group-value");
+      const groupingLabels = {
+        group_adapt: "Minimum counts",
+        group_adapt_snr: "Minimum SNR",
+        group_bins: "Number of bins",
+        group_counts: "Minimum counts per bin",
+        group_snr: "Minimum SNR",
+        group_width: "Number of channels"
+      };
 
       function updateGroupingFields() {
         const method = methodSelect.value;
-        const parameter = method === "group_adapt" || method === "group_adapt_snr"
-          ? "min"
-          : ["group_bins", "group_counts", "group_width"].includes(method)
-            ? "num"
-            : method === "group_snr" ? "snr" : "";
-
-        for (const group of parameterGroups) {
-          const active = group.dataset.groupParameter === parameter;
-          group.hidden = !active;
-          const input = group.querySelector("input");
-          input.required = active;
-        }
+        const active = Object.hasOwn(groupingLabels, method);
+        valueField.hidden = !active;
+        valueInput.required = active;
+        valueLabel.textContent = groupingLabels[method] || "Grouping value";
+        valueInput.step = method === "group_snr" ? "any" : "1";
+        valueInput.min = "1";
+        valueInput.setCustomValidity("");
       }
 
       methodSelect.addEventListener("change", updateGroupingFields);
-      snrInput.addEventListener("input", () => {
-        snrInput.setCustomValidity(
-          snrInput.value !== "" && Number(snrInput.value) <= 0
-            ? "Enter a positive signal-to-noise ratio."
+      valueInput.addEventListener("input", () => {
+        const isSnr = methodSelect.value === "group_snr";
+        const number = Number(valueInput.value);
+        const invalid = valueInput.value !== "" && (number <= 0 || !Number.isFinite(number) || (!isSnr && !Number.isInteger(number)));
+        valueInput.setCustomValidity(
+          invalid
+            ? isSnr ? "Enter a positive finite SNR." : "Enter a positive integer."
             : ""
         );
       });

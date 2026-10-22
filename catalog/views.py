@@ -8,6 +8,7 @@ from urllib.parse import quote_plus
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
+from bokeh.models import Legend, LegendItem
 from django.conf import settings
 from django.db import DatabaseError
 from django.http import FileResponse, Http404, HttpResponse
@@ -491,6 +492,8 @@ def _render_spectral_plot_html(
 
     sherpa_plot.set_backend("BokehBackend")
     dataplot = DataPHAPlot()
+    legend_items = []
+    rendered_count = 0
     for i, (part_name, tg_m, pha) in enumerate(spectra):
         dataplot.prepare(pha)
         dataplot.title = f"ObsID {observation.obsid}"
@@ -500,10 +503,24 @@ def _render_spectral_plot_html(
             marker=None,
             overplot=i != 0,
         )
+        # In Sherpa 4.19, the labels set in the plot() call above are not automatically added to the legend,
+        # so we manually add them here.
+        # This can be removed when Sherpa supports this.
+        figure_grid = sherpa_plot.backend.current_fig
+        figure = figure_grid.children[0][0]
+        renderers = figure.renderers[rendered_count:]
+        rendered_count = len(figure.renderers)
+        legend_items.append(
+            LegendItem(label=f"{part_name} {tg_m}", renderers=renderers)
+        )
+        # end manual legend workaround
 
     # Since the can't control the default Bokeh figure size from Sherpa,
     # we manually resize the figure here to a rectangular format that should work on most screens.
     figure_grid = sherpa_plot.backend.current_fig
+    if legend_items:
+        figure.add_layout(Legend(items=legend_items), "right")
+        figure.legend.click_policy = "mute"
     for figure, _, _ in figure_grid.children:
         figure.width = 960
         figure.height = 540
@@ -613,10 +630,12 @@ def download_selection(request):
 
 def plot_selection(request):
     """Render the plotting page for the currently selected observation(s)."""
-    raw_obsids = request.GET.getlist("obsids") + request.POST.getlist("obsids")
-    selected_obsids = _normalized_obsid_list(raw_obsids)
+    raw_tgcat_ids = request.GET.getlist("tgcat_ids") + request.POST.getlist(
+        "tgcat_ids"
+    )
+    selected_tgcat_ids = _normalized_obsid_list(raw_tgcat_ids)
     selected_obs_labels = [
-        _selected_observation_plot_label(obsid) for obsid in selected_obsids
+        _selected_observation_plot_label(tgcat_id) for tgcat_id in selected_tgcat_ids
     ]
     is_post = request.method == "POST"
     if is_post:
@@ -631,15 +650,15 @@ def plot_selection(request):
 
     plot_html = None
     plot_error = None
-    if len(selected_obsids) == 1 and form_is_valid:
+    if len(selected_tgcat_ids) == 1 and form_is_valid:
         try:
             grouping_method = cleaned_data.get("grouping_method") or None
             grouping_parameter = GROUPING_PARAMETER.get(grouping_method)
             plot_html = _render_spectral_plot_html(
-                selected_obsids[0],
+                selected_tgcat_ids[0],
                 analysis,
                 grouping_method,
-                cleaned_data.get(grouping_parameter) if grouping_parameter else None,
+                cleaned_data.get("group_value") if grouping_parameter else None,
             )
         except Exception as exc:  # pragma: no cover - runtime-only safeguard
             plot_error = str(exc)
@@ -648,7 +667,7 @@ def plot_selection(request):
         request,
         "catalog/plot_selection.html",
         {
-            "selected_obsids": selected_obsids,
+            "selected_tgcat_ids": selected_tgcat_ids,
             "selected_obs_labels": selected_obs_labels,
             "analysis": analysis,
             "plot_analysis_modes": PLOT_ANALYSIS_MODES,

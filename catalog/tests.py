@@ -119,20 +119,48 @@ class SpectralPlotUnitTests(SimpleTestCase):
 
         from catalog import views
 
-        bokeh_figure = SimpleNamespace(width=None, height=None, sizing_mode=None)
+        bokeh_figure = SimpleNamespace(
+            width=None,
+            height=None,
+            sizing_mode=None,
+            renderers=[],
+            legend=SimpleNamespace(click_policy=None),
+        )
+        legend = SimpleNamespace(click_policy=None)
+        bokeh_figure.add_layout = MagicMock(
+            side_effect=lambda added_legend, position: setattr(
+                bokeh_figure, "legend", added_legend
+            )
+        )
+        mock_plot.plot.side_effect = lambda **kwargs: bokeh_figure.renderers.extend(
+            [object(), object()]
+        )
         backend_figure = SimpleNamespace(children=[(bokeh_figure, 0, 0)])
-        with patch.object(
-            views.sherpa_plot.backend,
-            "current_fig",
-            backend_figure,
-            create=True,
+        with (
+            patch.object(
+                views.sherpa_plot.backend,
+                "current_fig",
+                backend_figure,
+                create=True,
+            ),
+            patch.object(views, "LegendItem") as mock_legend_item,
+            patch.object(views, "Legend", return_value=legend) as mock_legend,
         ):
-            result = views._render_spectral_plot_html(123, "channel", "group_counts", 8)
+            result = views._render_spectral_plot_html(
+                123, "channel", "group_counts", 8
+            )
 
         self.assertEqual(result, "<plot>")
         self.assertEqual(bokeh_figure.width, 960)
         self.assertEqual(bokeh_figure.height, 540)
         self.assertIsNone(bokeh_figure.sizing_mode)
+        self.assertEqual(bokeh_figure.legend.click_policy, "mute")
+        self.assertEqual(
+            [call_args.kwargs["label"] for call_args in mock_legend_item.call_args_list],
+            ["HEG -1", "MEG 1"],
+        )
+        self.assertEqual(mock_legend.call_count, 1)
+        bokeh_figure.add_layout.assert_called_once_with(legend, "right")
         mock_as_html.assert_called_once()
         with patch.object(
             views.sherpa_plot.backend,
@@ -199,13 +227,17 @@ class PlotSelectionViewTests(SimpleTestCase):
             source_name="CAPELLA"
         )
 
-        get_response = self.client.get("/plot-spectrum/?obsids=42")
+        get_response = self.client.get("/plot-spectrum/?tgcat_ids=42")
         self.assertEqual(get_response.status_code, 200)
         self.assertContains(get_response, 'value="wavelength" selected')
+        self.assertContains(get_response, 'name="group_value"')
+        self.assertNotContains(get_response, 'name="num"')
+        self.assertNotContains(get_response, 'name="min"')
+        self.assertNotContains(get_response, 'name="snr"')
         mock_render_plot.assert_called_once_with(42, "wavelength", None, None)
 
         post_response = self.client.post(
-            "/plot-spectrum/", {"obsids": "42", "analysis": "energy"}
+            "/plot-spectrum/", {"tgcat_ids": "42", "analysis": "energy"}
         )
         self.assertEqual(post_response.status_code, 200)
         self.assertContains(post_response, 'value="energy" selected')
@@ -220,10 +252,10 @@ class PlotSelectionViewTests(SimpleTestCase):
         grouped_response = self.client.post(
             "/plot-spectrum/",
             {
-                "obsids": "42",
+                "tgcat_ids": "42",
                 "analysis": "channel",
                 "grouping_method": "group_snr",
-                "snr": "0.75",
+                "group_value": "0.75",
             },
         )
         self.assertEqual(grouped_response.status_code, 200)
@@ -233,26 +265,26 @@ class PlotSelectionViewTests(SimpleTestCase):
         invalid_response = self.client.post(
             "/plot-spectrum/",
             {
-                "obsids": "42",
+                "tgcat_ids": "42",
                 "analysis": "channel",
                 "grouping_method": "group_counts",
-                "num": "0",
+                "group_value": "0",
             },
         )
         self.assertEqual(invalid_response.status_code, 200)
-        self.assertContains(invalid_response, "greater than or equal to 1")
+        self.assertContains(invalid_response, "num must be a positive integer")
         self.assertEqual(mock_render_plot.call_count, call_count)
 
 
 class GroupingFormTests(SimpleTestCase):
     def test_grouping_methods_validate_their_parameter(self):
         valid_inputs = (
-            {"grouping_method": "group_adapt", "min": "5"},
-            {"grouping_method": "group_adapt_snr", "min": "1"},
-            {"grouping_method": "group_bins", "num": "10"},
-            {"grouping_method": "group_counts", "num": "20"},
-            {"grouping_method": "group_snr", "snr": "2.5"},
-            {"grouping_method": "group_width", "num": "4"},
+            {"grouping_method": "group_adapt", "group_value": "5"},
+            {"grouping_method": "group_adapt_snr", "group_value": "1"},
+            {"grouping_method": "group_bins", "group_value": "10"},
+            {"grouping_method": "group_counts", "group_value": "20"},
+            {"grouping_method": "group_snr", "group_value": "2.5"},
+            {"grouping_method": "group_width", "group_value": "4"},
         )
         for grouping in valid_inputs:
             with self.subTest(grouping=grouping):
@@ -261,13 +293,14 @@ class GroupingFormTests(SimpleTestCase):
 
     def test_grouping_parameters_must_be_positive(self):
         invalid_inputs = (
-            {"grouping_method": "group_adapt", "min": "0"},
-            {"grouping_method": "group_counts", "num": "-1"},
-            {"grouping_method": "group_snr", "snr": "0"},
-            {"grouping_method": "group_snr", "snr": "-0.5"},
-            {"grouping_method": "group_snr", "snr": "nan"},
-            {"grouping_method": "group_snr", "snr": "inf"},
-            {"grouping_method": "group_snr", "snr": "not-a-number"},
+            {"grouping_method": "group_adapt", "group_value": "0"},
+            {"grouping_method": "group_counts", "group_value": "-1"},
+            {"grouping_method": "group_counts", "group_value": "1.5"},
+            {"grouping_method": "group_snr", "group_value": "0"},
+            {"grouping_method": "group_snr", "group_value": "-0.5"},
+            {"grouping_method": "group_snr", "group_value": "nan"},
+            {"grouping_method": "group_snr", "group_value": "inf"},
+            {"grouping_method": "group_snr", "group_value": "not-a-number"},
         )
         for grouping in invalid_inputs:
             with self.subTest(grouping=grouping):
@@ -279,7 +312,7 @@ class GroupingFormTests(SimpleTestCase):
             {"analysis": "energy", "grouping_method": "group_bins"}
         )
         self.assertFalse(form.is_valid())
-        self.assertIn("num", form.errors)
+        self.assertIn("group_value", form.errors)
 
 
 class CatalogSmokeTests(TestCase):
@@ -392,7 +425,9 @@ class CatalogSmokeTests(TestCase):
             SimpleNamespace(type="rmf", name="file", arc="arcA", value="leg_-1.rmf.gz"),
         ]
 
-        response = self.client.get(reverse("catalog:plot_spectrum") + "?obsids=42")
+        response = self.client.get(
+            reverse("catalog:plot_spectrum") + "?tgcat_ids=42"
+        )
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Bokeh plot")
@@ -402,7 +437,7 @@ class CatalogSmokeTests(TestCase):
 
         response = self.client.post(
             reverse("catalog:plot_spectrum"),
-            {"obsids": "42", "analysis": "channel"},
+            {"tgcat_ids": "42", "analysis": "channel"},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -441,7 +476,7 @@ class CatalogSmokeTests(TestCase):
         ]
 
         response = self.client.get(
-            reverse("catalog:plot_spectrum") + "?obsids=10&obsids=11"
+            reverse("catalog:plot_spectrum") + "?tgcat_ids=10&tgcat_ids=11"
         )
 
         self.assertEqual(response.status_code, 200)
