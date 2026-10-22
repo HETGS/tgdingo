@@ -13,6 +13,13 @@ from django.db import DatabaseError
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import render
 
+try:
+    from sherpa.astro import ui
+    import sherpa.plot as sherpa_plot
+except Exception:  # pragma: no cover - optional environment support
+    ui = None
+    sherpa_plot = None
+
 from .models import FileRecord, Observation, Source
 
 DATA_FILE_ROOT = Path(
@@ -402,6 +409,112 @@ def _selected_observation_plot_label(observation_id):
     return f"ObsID: {observation.obsid}"
 
 
+def _file_record_path(observation_id, file_type, value, arc_name=None):
+    """Return the resolved file path for a TGCat file record."""
+    if not value:
+        return None
+    if not arc_name:
+        arc_name = ""
+    arc_name = str(arc_name or "").strip()
+    candidate = Path(DATA_FILE_ROOT)
+    if arc_name:
+        candidate = candidate / arc_name
+    candidate = candidate / file_type / f"tgcid_{observation_id}_{value}"
+    resolved = candidate.resolve()
+    if resolved.exists() and resolved.is_file():
+        return resolved
+    return None
+
+
+def _render_spectral_plot_html(observation_id):
+    """Render a Bokeh plot for the selected observation using Sherpa and TGCat metadata."""
+    if ui is None or sherpa_plot is None:
+        raise RuntimeError("Sherpa is not available in this environment.")
+
+    observation = (
+        Observation.objects.filter(id=observation_id).filter(reject="N").first()
+    )
+    if observation is None:
+        raise ValueError(f"Observation {observation_id} was not found.")
+
+    file_rows = (
+        FileRecord.objects.filter(id=observation.id)
+        .filter(name="file")
+        .exclude(value__isnull=True)
+        .exclude(value="")
+        .order_by("arc", "type", "value")
+        .all()
+    )
+
+    pha2_paths = []
+    arf_paths = []
+    rmf_paths = []
+    for row in file_rows:
+        file_type = str(getattr(row, "type", "") or "").strip().lower()
+        value = str(getattr(row, "value", "") or "").strip()
+        arc_name = str(getattr(row, "arc", "") or "").strip()
+        if not value:
+            continue
+
+        if file_type == "pha2":
+            if "bg" in value.lower():
+                continue
+            path = _file_record_path(observation.id, "pha2", value, arc_name)
+            if path is not None:
+                pha2_paths.append(path)
+            continue
+
+        if file_type == "arf":
+            order = _spectral_order_from_filename(value)
+            if order in {"-1", "1"}:
+                path = _file_record_path(observation.id, "arf", value, arc_name)
+                if path is not None:
+                    arf_paths.append(path)
+            continue
+
+        if file_type == "rmf":
+            order = _spectral_order_from_filename(value)
+            if order in {"-1", "1"}:
+                path = _file_record_path(observation.id, "rmf", value, arc_name)
+                if path is not None:
+                    rmf_paths.append(path)
+
+    if not pha2_paths:
+        raise ValueError(f"No PHA2 product was found for observation {observation_id}.")
+
+    if not arf_paths and not rmf_paths:
+        for row in file_rows:
+            file_type = str(getattr(row, "type", "") or "").strip().lower()
+            value = str(getattr(row, "value", "") or "").strip()
+            arc_name = str(getattr(row, "arc", "") or "").strip()
+            if file_type == "arf":
+                path = _file_record_path(observation.id, "arf", value, arc_name)
+                if path is not None:
+                    arf_paths.append(path)
+            elif file_type == "rmf":
+                path = _file_record_path(observation.id, "rmf", value, arc_name)
+                if path is not None:
+                    rmf_paths.append(path)
+
+    pha2_path = sorted(set(pha2_paths))[0]
+    arf_paths = sorted(set(arf_paths))
+    rmf_paths = sorted(set(rmf_paths))
+
+    ui.clean()
+    sherpa_plot.set_backend("BokehBackend")
+    dataset_id = 1
+    ui.load_pha(dataset_id, str(pha2_path), use_errors=True)
+    for arf_path in arf_paths:
+        ui.load_arf(dataset_id, str(arf_path), resp_id=dataset_id)
+    for rmf_path in rmf_paths:
+        ui.load_rmf(dataset_id, str(rmf_path), resp_id=dataset_id)
+
+    ui.set_analysis("wave")
+    ui.plot_data(dataset_id)
+    plot = ui.get_data_plot(dataset_id)
+    return sherpa_plot.backend.as_html_plot(plot)
+
+
 def _build_download_zip(selected_obsids, selected_categories):
     """Create a zip archive of all matching TGCat files for the selected observations."""
     archive_buffer = io.BytesIO()
@@ -439,16 +552,10 @@ def _build_download_zip(selected_obsids, selected_categories):
 
                     arc_name = str(getattr(row, "arc", "") or "").strip()
                     value_name = str(getattr(row, "value", "") or "").strip()
-                    if not arc_name or not value_name:
-                        continue
-
-                    source_path = (
-                        DATA_FILE_ROOT
-                        / arc_name
-                        / file_type
-                        / f"tgcid_{observation.id}_{value_name}"
-                    ).resolve()
-                    if not source_path.exists() or not source_path.is_file():
+                    source_path = _file_record_path(
+                        observation.id, file_type, value_name, arc_name
+                    )
+                    if source_path is None:
                         continue
 
                     archive_name = (
@@ -509,12 +616,20 @@ def download_selection(request):
 
 
 def plot_selection(request):
-    """Render a placeholder plotting page for the currently selected observations."""
+    """Render the plotting page for the currently selected observation(s)."""
     raw_obsids = request.GET.getlist("obsids") + request.POST.getlist("obsids")
     selected_obsids = _normalized_obsid_list(raw_obsids)
     selected_obs_labels = [
         _selected_observation_plot_label(obsid) for obsid in selected_obsids
     ]
+
+    plot_html = None
+    plot_error = None
+    if len(selected_obsids) == 1:
+        try:
+            plot_html = _render_spectral_plot_html(selected_obsids[0])
+        except Exception as exc:  # pragma: no cover - runtime-only safeguard
+            plot_error = str(exc)
 
     return render(
         request,
@@ -522,6 +637,8 @@ def plot_selection(request):
         {
             "selected_obsids": selected_obsids,
             "selected_obs_labels": selected_obs_labels,
+            "plot_html": plot_html,
+            "plot_error": plot_error,
         },
     )
 

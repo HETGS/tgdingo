@@ -123,6 +123,46 @@ class CatalogSmokeTests(TestCase):
         self.assertNotContains(response, "evt2_10.fits")
         self.assertNotContains(response, "pha_11.fits")
 
+    @patch(
+        "catalog.views._render_spectral_plot_html", return_value="<div>Bokeh plot</div>"
+    )
+    @patch("catalog.views.FileRecord.objects.filter")
+    @patch("catalog.views.Source.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_plot_selection_page_renders_plot_for_single_selected_observation(
+        self,
+        mock_obs_filter,
+        mock_source_filter,
+        mock_file_filter,
+        mock_render_plot,
+    ):
+        mock_obs_filter.return_value.filter.return_value.first.return_value = (
+            SimpleNamespace(
+                id=42,
+                obsid=873,
+                srcid=1944,
+                obi=4,
+                target="CAPELLA",
+                reject="N",
+            )
+        )
+        mock_source_filter.return_value.first.return_value = SimpleNamespace(
+            srcid=1944,
+            source_name="CAPELLA",
+        )
+        file_queryset = mock_file_filter.return_value
+        file_queryset.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = [
+            SimpleNamespace(type="pha2", name="file", arc="arcA", value="pha2.gz"),
+            SimpleNamespace(type="arf", name="file", arc="arcA", value="leg_-1.arf.gz"),
+            SimpleNamespace(type="rmf", name="file", arc="arcA", value="leg_-1.rmf.gz"),
+        ]
+
+        response = self.client.get(reverse("catalog:plot_selection") + "?obsids=42")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Bokeh plot")
+        self.assertContains(response, "Selected observation")
+
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
     def test_plot_selection_page_lists_selected_observations(

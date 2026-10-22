@@ -6,12 +6,27 @@
   <section class="page-hero panel">
     <div>
       <p class="eyebrow">Plotting</p>
-      <h1>Plot selected observations</h1>
+      {% if plot_html %}
+        <h1>Selected observation</h1>
+      {% else %}
+        <h1>Plot selected observations</h1>
+      {% endif %}
     </div>
-    <p class="muted-note">This page is a placeholder for the plotting workflow. The selected observations are listed below and will be passed to the plotting tool once it is implemented.</p>
+    {% if plot_html %}
+      <p class="muted-note">Selected observation: {{ selected_obs_labels|join:", " }}</p>
+    {% else %}
+      <p class="muted-note">This page is a placeholder for the plotting workflow. The selected observations are listed below and will be passed to the plotting tool once it is implemented.</p>
+    {% endif %}
   </section>
 
-  {% if selected_obsids %}
+  {% if plot_html %}
+    <section class="panel">
+      <h2>Plot</h2>
+      <div class="plot-container">
+        {{ plot_html|safe }}
+      </div>
+    </section>
+  {% elif selected_obsids %}
     <section class="panel">
       <h2>Selected observations</h2>
       <p class="muted-note">Ready to plot: {{ selected_obs_labels|join:", " }}</p>
@@ -26,6 +41,13 @@
     <section class="empty-state panel">
       <h2>No observations selected</h2>
       <p class="muted-note">Select one or more search results to continue with plotting.</p>
+    </section>
+  {% endif %}
+
+  {% if plot_error %}
+    <section class="empty-state panel">
+      <h2>Plot unavailable</h2>
+      <p class="muted-note">{{ plot_error }}</p>
     </section>
   {% endif %}
 {% endblock %}
