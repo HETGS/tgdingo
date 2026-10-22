@@ -50,6 +50,67 @@ class FakeQuerySet:
 
 
 class SpectralPlotUnitTests(SimpleTestCase):
+    @patch("catalog.views._file_record_path")
+    @patch("catalog.views.read_rmf", side_effect=lambda path: f"rmf:{path}")
+    @patch("catalog.views.read_arf", side_effect=lambda path: f"arf:{path}")
+    def test_hrc_loads_all_response_orders_for_each_tg_m_sign(
+        self, mock_read_arf, mock_read_rmf, mock_file_path
+    ):
+        from catalog.views import _load_spectral_responses
+
+        observation = SimpleNamespace(id=2459, obsid=500, instrument="HRC-S")
+        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: (
+            f"/data/{file_type}/tgcid_{observation_id}_{value}"
+        )
+
+        for tg_m, orders in (
+            (-1, range(-1, -9, -1)),
+            (1, range(1, 9)),
+        ):
+            pha = SimpleNamespace(set_response=MagicMock())
+            _load_spectral_responses(pha, observation, "LEG", tg_m, "arcA")
+
+            expected_arf_paths = [
+                f"/data/arf/tgcid_2459_leg_{order}.arf.gz" for order in orders
+            ]
+            expected_rmf_paths = [
+                f"/data/rmf/tgcid_2459_leg_{order}.rmf.gz" for order in orders
+            ]
+            self.assertEqual(
+                [call.args[0] for call in mock_read_arf.call_args_list],
+                expected_arf_paths,
+            )
+            self.assertEqual(
+                [call.args[0] for call in mock_read_rmf.call_args_list],
+                expected_rmf_paths,
+            )
+            self.assertEqual(
+                [call.kwargs["id"] for call in pha.set_response.call_args_list],
+                list(range(1, 9)),
+            )
+            mock_read_arf.reset_mock()
+            mock_read_rmf.reset_mock()
+
+    @patch("catalog.views._file_record_path")
+    @patch("catalog.views.read_rmf", return_value="rmf")
+    @patch("catalog.views.read_arf", return_value="arf")
+    def test_non_hrc_loads_one_default_response(
+        self, mock_read_arf, mock_read_rmf, mock_file_path
+    ):
+        from catalog.views import _load_spectral_responses
+
+        observation = SimpleNamespace(id=123, obsid=873, instrument="ACIS")
+        pha = SimpleNamespace(set_response=MagicMock())
+        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: (
+            f"/data/{file_type}/tgcid_{observation_id}_{value}"
+        )
+
+        _load_spectral_responses(pha, observation, "HEG", -1, "arcA")
+
+        mock_read_arf.assert_called_once_with("/data/arf/tgcid_123_heg_-1.arf.gz")
+        mock_read_rmf.assert_called_once_with("/data/rmf/tgcid_123_heg_-1.rmf.gz")
+        pha.set_response.assert_called_once_with("arf", "rmf", id=None)
+
     def test_renderer_rejects_untrusted_grouping_arguments_before_database_access(self):
         from catalog.views import _render_spectral_plot_html
 
@@ -108,7 +169,13 @@ class SpectralPlotUnitTests(SimpleTestCase):
         mock_observation_filter.return_value.filter.return_value.first.return_value = (
             SimpleNamespace(id=123, obsid=873)
         )
-        mock_file_filter.return_value.filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.first.return_value = SimpleNamespace(
+        pha2_queryset = (
+            mock_file_filter.return_value.filter.return_value.filter.return_value
+        )
+        exclude_value = pha2_queryset.exclude.return_value
+        exclude_empty_value = exclude_value.exclude.return_value
+        exclude_background = exclude_empty_value.exclude.return_value
+        exclude_background.order_by.return_value.first.return_value = SimpleNamespace(
             value="pha2.gz", arc="arcA"
         )
         mock_file_path.side_effect = lambda observation_id, file_type, value, arc: (
@@ -151,6 +218,10 @@ class SpectralPlotUnitTests(SimpleTestCase):
             )
 
         self.assertEqual(result, "<plot>")
+        self.assertIn(
+            call(value__icontains="bg"), exclude_empty_value.exclude.call_args_list
+        )
+        exclude_background.order_by.assert_called_once_with("arc", "value")
         self.assertEqual(bokeh_figure.width, 960)
         self.assertEqual(bokeh_figure.height, 540)
         self.assertIsNone(bokeh_figure.sizing_mode)
@@ -183,8 +254,12 @@ class SpectralPlotUnitTests(SimpleTestCase):
                 call("/data/arcA/rmf/tgcid_123_meg_1.rmf.gz"),
             ],
         )
-        first_spectrum.set_response.assert_called_once_with("arf-heg", "rmf-heg")
-        second_spectrum.set_response.assert_called_once_with("arf-meg", "rmf-meg")
+        first_spectrum.set_response.assert_called_once_with(
+            "arf-heg", "rmf-heg", id=None
+        )
+        second_spectrum.set_response.assert_called_once_with(
+            "arf-meg", "rmf-meg", id=None
+        )
         first_spectrum.set_analysis.assert_called_once_with("channel")
         second_spectrum.set_analysis.assert_called_once_with("channel")
         first_spectrum.group_counts.assert_called_once_with(8)

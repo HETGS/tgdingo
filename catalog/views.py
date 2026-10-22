@@ -427,6 +427,38 @@ def _file_record_path(observation_id, file_type, value, arc_name=None):
     return None
 
 
+def _load_spectral_responses(pha, observation, part_name, tg_m, arc_name):
+    """Load the response files associated with a PHA spectrum."""
+    if str(getattr(observation, "instrument", "")).upper().startswith("HRC"):
+        response_orders = range(-1, -9, -1) if tg_m < 0 else range(1, 9)
+    else:
+        response_orders = (tg_m,)
+
+    for response_index, order in enumerate(response_orders, start=1):
+        arf_path = _file_record_path(
+            observation.id,
+            "arf",
+            f"{part_name.lower()}_{order}.arf.gz",
+            arc_name,
+        )
+        rmf_path = _file_record_path(
+            observation.id,
+            "rmf",
+            f"{part_name.lower()}_{order}.rmf.gz",
+            arc_name,
+        )
+        if arf_path is None or rmf_path is None:
+            raise ValueError(
+                f"ARF or RMF response is missing for {part_name} order {order} "
+                f"in observation {observation.obsid}."
+            )
+
+        arf = read_arf(str(arf_path))
+        rmf = read_rmf(str(rmf_path))
+        response_id = response_index if len(response_orders) > 1 else None
+        pha.set_response(arf, rmf, id=response_id)
+
+
 def _render_spectral_plot_html(
     observation_id, analysis="wavelength", grouping_method=None, grouping_value=None
 ):
@@ -446,6 +478,8 @@ def _render_spectral_plot_html(
         .filter(type="pha2")
         .exclude(value__isnull=True)
         .exclude(value="")
+        .exclude(value__icontains="bg")
+        .order_by("arc", "value")
         .first()
     )
     if files is None:
@@ -464,27 +498,7 @@ def _render_spectral_plot_html(
         if abs(tg_m) > 1:
             continue
         part_name = TG_PART[tg_part]
-        arf_path = _file_record_path(
-            observation.id,
-            "arf",
-            f"{part_name.lower()}_{tg_m}.arf.gz",
-            arc_name,
-        )
-        rmf_path = _file_record_path(
-            observation.id,
-            "rmf",
-            f"{part_name.lower()}_{tg_m}.rmf.gz",
-            arc_name,
-        )
-        if arf_path is None or rmf_path is None:
-            raise ValueError(
-                f"ARF or RMF response is missing for {part_name} {tg_m} "
-                f"in observation {observation_id}."
-            )
-
-        arf = read_arf(str(arf_path))
-        rmf = read_rmf(str(rmf_path))
-        pha.set_response(arf, rmf)
+        _load_spectral_responses(pha, observation, part_name, tg_m, arc_name)
         pha.set_analysis(analysis)
         if grouping_method in GROUPING_PARAMETER:
             getattr(pha, grouping_method)(grouping_value)
