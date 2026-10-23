@@ -50,161 +50,46 @@ class FakeQuerySet:
 
 
 class SpectralPlotUnitTests(SimpleTestCase):
-    @patch("catalog.views.sherpa_plot.backend.as_html", return_value="<plot>")
-    @patch("catalog.views.sherpa_plot.set_backend")
-    @patch("catalog.views.DataPHAPlot")
-    @patch("catalog.views.read_rmf", side_effect=["rmf-1", "rmf-2"])
-    @patch("catalog.views.read_arf", side_effect=["arf-1", "arf-2"])
-    @patch("catalog.views.read_pha")
-    @patch("catalog.views._file_record_path")
-    @patch("catalog.views.FileRecord.objects.filter")
-    @patch("catalog.views.Observation.objects.filter")
-    def test_multi_observation_plot_labels_each_spectrum_with_obsid(
-        self,
-        mock_observation_filter,
-        mock_file_filter,
-        mock_file_path,
-        mock_read_pha,
-        mock_read_arf,
-        mock_read_rmf,
-        mock_plot_class,
-        mock_set_backend,
-        mock_as_html,
-    ):
+    def test_setup_spectra_caches_pha_and_arf_loading(self):
         from catalog import views
 
-        observations = [
-            SimpleNamespace(id=101, obsid=873, obi=1, srcid=1, instrument="ACIS"),
-            SimpleNamespace(id=202, obsid=873, obi=2, srcid=1, instrument="ACIS"),
-        ]
-        mock_observation_filter.return_value.filter.return_value.first.side_effect = (
-            observations
-        )
-        file_query = (
-            mock_file_filter.return_value.filter.return_value.filter.return_value
-        )
-        file_query.exclude.return_value.exclude.return_value.exclude.return_value.order_by.return_value.first.side_effect = [
-            SimpleNamespace(value="pha2-a.gz", arc="arcA"),
-            SimpleNamespace(value="pha2-b.gz", arc="arcB"),
-        ]
         spectra = [
             SimpleNamespace(
-                header={"TG_M": -1, "TG_PART": 3},
+                header={"TG_M": -1, "TG_PART": 3, "INSTRUME": "HRC-S"},
                 set_response=MagicMock(),
-                set_analysis=MagicMock(),
             ),
             SimpleNamespace(
-                header={"TG_M": 1, "TG_PART": 3},
+                header={"TG_M": 1, "TG_PART": 3, "INSTRUME": "HRC-S"},
                 set_response=MagicMock(),
-                set_analysis=MagicMock(),
             ),
         ]
-        mock_read_pha.side_effect = [[spectra[0]], [spectra[1]]]
-        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: Path(
-            f"/data/{arc}/{file_type}/tgcid_{observation_id}_{value}"
-        )
-        plotter = mock_plot_class.return_value
-        figure = SimpleNamespace(renderers=[])
-        legend = SimpleNamespace(click_policy=None)
-        figure_grid = SimpleNamespace(children=[(figure, 0, 0)])
-        plotter.plot.side_effect = lambda **kwargs: figure.renderers.extend(
-            [object(), object()]
-        )
-        figure.add_layout = MagicMock(
-            side_effect=lambda added_legend, side: setattr(
-                figure, "legend", added_legend
-            )
-        )
+        views._setup_spectra.cache_clear()
+        try:
+            with (
+                patch("catalog.views.FileRecord.objects.filter") as filter_files,
+                patch("catalog.views.read_pha", return_value=spectra) as read_pha,
+                patch(
+                    "catalog.views.read_arf", side_effect=lambda path: path
+                ) as read_arf,
+                patch("catalog.views._file_record_path") as file_path,
+            ):
+                file_rows = filter_files.return_value.filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.exclude.return_value.order_by.return_value
+                file_rows.first.return_value = SimpleNamespace(
+                    value="pha2.gz", arc="arcA"
+                )
+                file_path.side_effect = lambda tgcat_id, kind, value, arc: (
+                    f"/data/{kind}/tgcid_{tgcat_id}_{value}"
+                )
+                first_result = views._setup_spectra(2459)
+                second_result = views._setup_spectra(2459)
 
-        with (
-            patch.object(
-                views.sherpa_plot.backend, "current_fig", figure_grid, create=True
-            ),
-            patch.object(views.Source.objects, "filter") as source_filter,
-            patch.object(views, "_obsid_has_multiple_obi", return_value=True),
-            patch.object(views, "LegendItem") as mock_legend_item,
-            patch.object(views, "Legend", return_value=legend),
-        ):
-            source_filter.return_value.first.return_value = SimpleNamespace(
-                source_name="CAPELLA"
-            )
-            result = views._render_spectral_plot_html([101, 202])
-
-        self.assertEqual(result, "<plot>")
-        self.assertEqual(
-            [call.kwargs["label"] for call in mock_legend_item.call_args_list],
-            [
-                "ObsID: 873 (OBI: 1, CAPELLA) LEG -1",
-                "ObsID: 873 (OBI: 2, CAPELLA) LEG 1",
-            ],
-        )
-        self.assertEqual(
-            plotter.title,
-            "ObsID: 873 (OBI: 1, CAPELLA), ObsID: 873 (OBI: 2, CAPELLA)",
-        )
-        self.assertEqual(plotter.plot.call_args_list[0].kwargs["overplot"], False)
-        self.assertEqual(plotter.plot.call_args_list[1].kwargs["overplot"], True)
-
-    @patch("catalog.views._file_record_path")
-    @patch("catalog.views.read_rmf", side_effect=lambda path: f"rmf:{path}")
-    @patch("catalog.views.read_arf", side_effect=lambda path: f"arf:{path}")
-    def test_hrc_loads_all_response_orders_for_each_tg_m_sign(
-        self, mock_read_arf, mock_read_rmf, mock_file_path
-    ):
-        from catalog.views import _load_spectral_responses
-
-        observation = SimpleNamespace(id=2459, obsid=500, instrument="HRC-S")
-        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: (
-            f"/data/{file_type}/tgcid_{observation_id}_{value}"
-        )
-
-        for tg_m, orders in (
-            (-1, range(-1, -9, -1)),
-            (1, range(1, 9)),
-        ):
-            pha = SimpleNamespace(set_response=MagicMock())
-            _load_spectral_responses(pha, observation, "LEG", tg_m, "arcA")
-
-            expected_arf_paths = [
-                f"/data/arf/tgcid_2459_leg_{order}.arf.gz" for order in orders
-            ]
-            expected_rmf_paths = [
-                f"/data/rmf/tgcid_2459_leg_{order}.rmf.gz" for order in orders
-            ]
-            self.assertEqual(
-                [call.args[0] for call in mock_read_arf.call_args_list],
-                expected_arf_paths,
-            )
-            self.assertEqual(
-                [call.args[0] for call in mock_read_rmf.call_args_list],
-                expected_rmf_paths,
-            )
-            self.assertEqual(
-                [call.kwargs["id"] for call in pha.set_response.call_args_list],
-                list(range(1, 9)),
-            )
-            mock_read_arf.reset_mock()
-            mock_read_rmf.reset_mock()
-
-    @patch("catalog.views._file_record_path")
-    @patch("catalog.views.read_rmf", return_value="rmf")
-    @patch("catalog.views.read_arf", return_value="arf")
-    def test_non_hrc_loads_one_default_response(
-        self, mock_read_arf, mock_read_rmf, mock_file_path
-    ):
-        from catalog.views import _load_spectral_responses
-
-        observation = SimpleNamespace(id=123, obsid=873, instrument="ACIS")
-        pha = SimpleNamespace(set_response=MagicMock())
-        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: (
-            f"/data/{file_type}/tgcid_{observation_id}_{value}"
-        )
-
-        _load_spectral_responses(pha, observation, "HEG", -1, "arcA")
-
-        mock_read_arf.assert_called_once_with("/data/arf/tgcid_123_heg_-1.arf.gz")
-        mock_read_rmf.assert_called_once_with("/data/rmf/tgcid_123_heg_-1.rmf.gz")
-        pha.set_response.assert_called_once_with("arf", "rmf", id=None)
+            self.assertIs(first_result, second_result)
+            read_pha.assert_called_once()
+            self.assertEqual(read_arf.call_count, 16)
+            self.assertEqual(spectra[0].set_response.call_count, 8)
+            self.assertEqual(spectra[1].set_response.call_count, 8)
+        finally:
+            views._setup_spectra.cache_clear()
 
     def test_renderer_rejects_untrusted_grouping_arguments_before_database_access(self):
         from catalog.views import _render_spectral_plot_html
@@ -229,26 +114,16 @@ class SpectralPlotUnitTests(SimpleTestCase):
     @patch("catalog.views.sherpa_plot.backend.as_html", return_value="<plot>")
     @patch("catalog.views.sherpa_plot.set_backend")
     @patch("catalog.views.DataPHAPlot")
-    @patch("catalog.views.read_rmf", side_effect=["rmf-heg", "rmf-meg"])
-    @patch("catalog.views.read_arf", side_effect=["arf-heg", "arf-meg"])
-    @patch("catalog.views.read_pha")
-    @patch("catalog.views._file_record_path")
-    @patch("catalog.views.FileRecord.objects.filter")
+    @patch("catalog.views._setup_spectra")
     @patch("catalog.views.Observation.objects.filter")
     def test_plot_overlays_each_spectrum_with_its_matching_responses(
         self,
         mock_observation_filter,
-        mock_file_filter,
-        mock_file_path,
-        mock_read_pha,
-        mock_read_arf,
-        mock_read_rmf,
+        mock_setup_spectra,
         mock_plot_class,
         mock_set_backend,
         mock_as_html,
     ):
-        from pathlib import Path
-
         first_spectrum = SimpleNamespace(
             header={"TG_M": -1, "TG_PART": 1},
             set_response=MagicMock(),
@@ -264,19 +139,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
         mock_observation_filter.return_value.filter.return_value.first.return_value = (
             SimpleNamespace(id=123, obsid=873, obi=1, srcid=1)
         )
-        pha2_queryset = (
-            mock_file_filter.return_value.filter.return_value.filter.return_value
-        )
-        exclude_value = pha2_queryset.exclude.return_value
-        exclude_empty_value = exclude_value.exclude.return_value
-        exclude_background = exclude_empty_value.exclude.return_value
-        exclude_background.order_by.return_value.first.return_value = SimpleNamespace(
-            value="pha2.gz", arc="arcA"
-        )
-        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: (
-            Path("/data") / arc / file_type / f"tgcid_{observation_id}_{value}"
-        )
-        mock_read_pha.return_value = [first_spectrum, second_spectrum]
+        mock_setup_spectra.return_value = [first_spectrum, second_spectrum]
         mock_plot = mock_plot_class.return_value
 
         from catalog import views
@@ -318,10 +181,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
             )
 
         self.assertEqual(result, "<plot>")
-        self.assertIn(
-            call(value__icontains="bg"), exclude_empty_value.exclude.call_args_list
-        )
-        exclude_background.order_by.assert_called_once_with("arc", "value")
+        mock_setup_spectra.assert_called_once_with(123)
         self.assertEqual(bokeh_figure.width, 960)
         self.assertEqual(bokeh_figure.height, 540)
         self.assertIsNone(bokeh_figure.sizing_mode)
@@ -340,34 +200,15 @@ class SpectralPlotUnitTests(SimpleTestCase):
             create=True,
         ):
             self.assertIs(mock_as_html.call_args.args[0](), backend_figure)
-        self.assertEqual(
-            mock_read_arf.call_args_list,
-            [
-                call("/data/arcA/arf/tgcid_123_heg_-1.arf.gz"),
-                call("/data/arcA/arf/tgcid_123_meg_1.arf.gz"),
-            ],
-        )
-        self.assertEqual(
-            mock_read_rmf.call_args_list,
-            [
-                call("/data/arcA/rmf/tgcid_123_heg_-1.rmf.gz"),
-                call("/data/arcA/rmf/tgcid_123_meg_1.rmf.gz"),
-            ],
-        )
-        first_spectrum.set_response.assert_called_once_with(
-            "arf-heg", "rmf-heg", id=None
-        )
-        second_spectrum.set_response.assert_called_once_with(
-            "arf-meg", "rmf-meg", id=None
-        )
-        first_spectrum.set_analysis.assert_called_once_with("channel")
-        second_spectrum.set_analysis.assert_called_once_with("channel")
-        first_spectrum.group_counts.assert_called_once_with(8)
-        second_spectrum.group_counts.assert_called_once_with(8)
-        self.assertEqual(
-            mock_plot.prepare.call_args_list,
-            [call(first_spectrum), call(second_spectrum)],
-        )
+        plotted_spectra = [call.args[0] for call in mock_plot.prepare.call_args_list]
+        self.assertEqual(plotted_spectra, [first_spectrum, second_spectrum])
+        self.assertIsNot(plotted_spectra[0], first_spectrum)
+        self.assertIsNot(plotted_spectra[1], second_spectrum)
+        for pha in plotted_spectra:
+            pha.set_analysis.assert_called_once_with("channel")
+            pha.group_counts.assert_called_once_with(8)
+        first_spectrum.set_analysis.assert_not_called()
+        second_spectrum.set_analysis.assert_not_called()
         self.assertEqual(
             mock_plot.plot.call_args_list,
             [

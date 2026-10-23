@@ -1,3 +1,5 @@
+import copy
+import functools
 import io
 import os
 import re
@@ -15,7 +17,7 @@ from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import render
 
 from .forms import GROUPING_PARAMETER, PlotSelectionForm, validate_grouping
-from sherpa.astro.io import read_arf, read_pha, read_rmf
+from sherpa.astro.io import read_arf, read_pha
 from sherpa.astro.plot import DataPHAPlot
 import sherpa.plot as sherpa_plot
 
@@ -419,45 +421,78 @@ def _file_record_path(observation_id, file_type, value, arc_name=None):
     return None
 
 
-def _load_spectral_responses(pha, observation, part_name, tg_m, arc_name):
+@functools.lru_cache(maxsize=16)
+def _setup_spectra(tgcat_id):
     """Load the response files associated with a PHA spectrum."""
-    if str(getattr(observation, "instrument", "")).upper().startswith("HRC"):
-        response_orders = range(-1, -9, -1) if tg_m < 0 else range(1, 9)
-    else:
-        response_orders = (tg_m,)
+    spectra = []
 
-    for response_index, order in enumerate(response_orders, start=1):
-        arf_path = _file_record_path(
-            observation.id,
-            "arf",
-            f"{part_name.lower()}_{order}.arf.gz",
-            arc_name,
-        )
-        rmf_path = _file_record_path(
-            observation.id,
-            "rmf",
-            f"{part_name.lower()}_{order}.rmf.gz",
-            arc_name,
-        )
-        if arf_path is None or rmf_path is None:
-            raise ValueError(
-                f"ARF or RMF response is missing for {part_name} order {order} "
-                f"in observation {observation.obsid}."
+    files = (
+        FileRecord.objects.filter(id=tgcat_id)
+        .filter(name="file")
+        .filter(type="pha2")
+        .exclude(value__isnull=True)
+        .exclude(value="")
+        .exclude(value__icontains="bg")
+        .order_by("arc", "value")
+        .first()
+    )
+    if files is None:
+        raise ValueError(f"No valid PHA2 file found for observation {tgcat_id}.")
+    value = str(getattr(files, "value", "") or "").strip()
+    arc_name = str(getattr(files, "arc", "") or "").strip()
+    path = _file_record_path(tgcat_id, "pha2", value, arc_name)
+    if path is None:
+        raise ValueError(f"PHA2 file is missing for observation {tgcat_id}.")
+
+    phalist = read_pha(str(path))
+
+    for pha in phalist:
+        tg_m = int(pha.header["TG_M"])
+        tg_part = int(pha.header["TG_PART"])
+        if abs(tg_m) > 1:
+            continue
+        if str(pha.header.get("INSTRUME", "")).upper().startswith("HRC"):
+            response_orders = range(-1, -9, -1) if tg_m < 0 else range(1, 9)
+        else:
+            response_orders = (tg_m,)
+        part_name = TG_PART[tg_part]
+
+        for response_index, order in enumerate(response_orders, start=1):
+            # For plotting alone, the RMF is not needed.
+            # On the other hand, those are big files and we save a lot
+            # of time by not loading them, so we only load the ARF here.
+            arf_path = _file_record_path(
+                tgcat_id,
+                "arf",
+                f"{part_name.lower()}_{order}.arf.gz",
+                arc_name,
             )
+            if arf_path is None:
+                raise ValueError(
+                    f"ARF response is missing for {part_name} order {order} "
+                    f"in TGCat row {tgcat_id}."
+                )
+            arf = read_arf(str(arf_path))
+            pha.set_response(arf, None, id=response_index)
 
-        arf = read_arf(str(arf_path))
-        rmf = read_rmf(str(rmf_path))
-        response_id = response_index if len(response_orders) > 1 else None
-        pha.set_response(arf, rmf, id=response_id)
+        spectra.append(pha)
+    return spectra
 
 
 def _render_spectral_plot_html(
     observation_ids, analysis="wavelength", grouping_method=None, grouping_value=None
 ):
-    """Render a Bokeh plot for selected TGCat observation rows."""
-    grouping_method, grouping_value = validate_grouping(
-        grouping_method, grouping_value
-    )
+    """Render a Bokeh plot for selected TGCat observation rows.
+
+    Notes
+    -----
+    We are still exploring if this approach is fast enough. Here is a thought
+    for significant speed-up:
+    Currently, the pha is read first, and then looping over it, the arf is added
+    as needed for some of the spectra (e.g. not HETG order -3).
+    Instead, one
+    """
+    grouping_method, grouping_value = validate_grouping(grouping_method, grouping_value)
     if isinstance(observation_ids, int):
         observation_ids = [observation_ids]
     observations = []
@@ -469,44 +504,18 @@ def _render_spectral_plot_html(
         if observation is None:
             raise ValueError(f"Observation {observation_id} was not found.")
         observations.append(observation)
-
-        files = (
-            FileRecord.objects.filter(id=observation.id)
-            .filter(name="file")
-            .filter(type="pha2")
-            .exclude(value__isnull=True)
-            .exclude(value="")
-            .exclude(value__icontains="bg")
-            .order_by("arc", "value")
-            .first()
+        spectra.extend(
+            (observation, copy.deepcopy(pha)) for pha in _setup_spectra(observation_id)
         )
-        if files is None:
-            raise ValueError(
-                f"No valid PHA2 file found for observation {observation_id}."
-            )
-        value = str(getattr(files, "value", "") or "").strip()
-        arc_name = str(getattr(files, "arc", "") or "").strip()
-        path = _file_record_path(observation.id, "pha2", value, arc_name)
-        if path is None:
-            raise ValueError(f"PHA2 file is missing for observation {observation_id}.")
-
-        phalist = read_pha(str(path))
-        for pha in phalist:
-            tg_m = int(pha.header["TG_M"])
-            tg_part = int(pha.header["TG_PART"])
-            if abs(tg_m) > 1:
-                continue
-            part_name = TG_PART[tg_part]
-            _load_spectral_responses(pha, observation, part_name, tg_m, arc_name)
-            pha.set_analysis(analysis)
-            if grouping_method in GROUPING_PARAMETER:
-                getattr(pha, grouping_method)(grouping_value)
-            spectra.append((observation, part_name, tg_m, pha))
 
     if not spectra:
         raise ValueError(
             "No plottable spectra were found for the selected observations."
         )
+    for _, pha in spectra:
+        pha.set_analysis(analysis)
+        if grouping_method in GROUPING_PARAMETER:
+            getattr(pha, grouping_method)(grouping_value)
 
     sherpa_plot.set_backend("BokehBackend")
     dataplot = DataPHAPlot()
@@ -526,9 +535,11 @@ def _render_spectral_plot_html(
     obs_titles = list(dict.fromkeys(observation_labels.values()))
     plot_title = obs_titles[0] if len(obs_titles) == 1 else ", ".join(obs_titles)
 
-    for i, (observation, part_name, tg_m, pha) in enumerate(spectra):
+    for i, (observation, pha) in enumerate(spectra):
         dataplot.prepare(pha)
         obs_title = observation_labels[observation.id]
+        part_name = TG_PART.get(int(pha.header["TG_PART"]), "Unknown")
+        tg_m = int(pha.header["TG_M"])
         dataplot.title = plot_title
         dataplot.plot(
             label=(
