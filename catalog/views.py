@@ -382,32 +382,24 @@ def _normalized_obsid_list(values):
     return list(dict.fromkeys(selected))
 
 
+def _format_observation_label(observation, source_name=None):
+    """Format an observation label consistently across the page and plot."""
+    sname = source_name or "Unknown"
+    if _obsid_has_multiple_obi(observation.obsid):
+        return f"ObsID: {observation.obsid} (OBI: {observation.obi}, {sname})"
+    else:
+        return f"ObsID: {observation.obsid} ({sname})"
+
+
 def _selected_observation_display_name(observation_id):
-    """Render the user-facing selection label based on the TGCat observation row."""
+    """Return the shared display label for a selected TGCat row."""
     observation = (
         Observation.objects.filter(id=observation_id).filter(reject="N").first()
     )
-    # Should never happen , but better save than sorry.
     if observation is None:
         return f"(ObsID: {observation_id}, Unknown)"
     source = Source.objects.filter(srcid=observation.srcid).first()
-    if source is None:
-        return f"(ObsID: {observation.obsid}, Unknown)"
-    return f"(ObsID: {observation.obsid}, {source.source_name})"
-
-
-def _selected_observation_plot_label(observation_id):
-    """Render the plot-selection label, including OBI only when required."""
-    observation = (
-        Observation.objects.filter(id=observation_id).filter(reject="N").first()
-    )
-    if observation is None:
-        return f"ObsID: {observation_id}"
-    if getattr(observation, "obi", None) is not None and _obsid_has_multiple_obi(
-        observation.obsid
-    ):
-        return f"ObsID: {observation.obsid} (OBI: {observation.obi})"
-    return f"ObsID: {observation.obsid}"
+    return _format_observation_label(observation, getattr(source, "source_name", None))
 
 
 def _file_record_path(observation_id, file_type, value, arc_name=None):
@@ -460,59 +452,90 @@ def _load_spectral_responses(pha, observation, part_name, tg_m, arc_name):
 
 
 def _render_spectral_plot_html(
-    observation_id, analysis="wavelength", grouping_method=None, grouping_value=None
+    observation_ids, analysis="wavelength", grouping_method=None, grouping_value=None
 ):
-    """Render a Bokeh plot for the selected observation using Sherpa and TGCat metadata."""
+    """Render a Bokeh plot for selected TGCat observation rows."""
     grouping_method, grouping_value = validate_grouping(
         grouping_method, grouping_value
     )
-    observation = (
-        Observation.objects.filter(id=observation_id).filter(reject="N").first()
-    )
-    if observation is None:
-        raise ValueError(f"Observation {observation_id} was not found.")
-
-    files = (
-        FileRecord.objects.filter(id=observation.id)
-        .filter(name="file")
-        .filter(type="pha2")
-        .exclude(value__isnull=True)
-        .exclude(value="")
-        .exclude(value__icontains="bg")
-        .order_by("arc", "value")
-        .first()
-    )
-    if files is None:
-        raise ValueError(f"No valid pha2 file found for observation {observation_id}.")
-    value = str(getattr(files, "value", "") or "").strip()
-    arc_name = str(getattr(files, "arc", "") or "").strip()
-    path = _file_record_path(observation.id, "pha2", value, arc_name)
-    if path is None:
-        raise ValueError(f"PHA2 file is missing for observation {observation_id}.")
-
-    phalist = read_pha(str(path))
+    if isinstance(observation_ids, int):
+        observation_ids = [observation_ids]
+    observations = []
     spectra = []
-    for pha in phalist:
-        tg_m = int(pha.header["TG_M"])
-        tg_part = int(pha.header["TG_PART"])
-        if abs(tg_m) > 1:
-            continue
-        part_name = TG_PART[tg_part]
-        _load_spectral_responses(pha, observation, part_name, tg_m, arc_name)
-        pha.set_analysis(analysis)
-        if grouping_method in GROUPING_PARAMETER:
-            getattr(pha, grouping_method)(grouping_value)
-        spectra.append((part_name, tg_m, pha))
+    for observation_id in observation_ids:
+        observation = (
+            Observation.objects.filter(id=observation_id).filter(reject="N").first()
+        )
+        if observation is None:
+            raise ValueError(f"Observation {observation_id} was not found.")
+        observations.append(observation)
+
+        files = (
+            FileRecord.objects.filter(id=observation.id)
+            .filter(name="file")
+            .filter(type="pha2")
+            .exclude(value__isnull=True)
+            .exclude(value="")
+            .exclude(value__icontains="bg")
+            .order_by("arc", "value")
+            .first()
+        )
+        if files is None:
+            raise ValueError(
+                f"No valid PHA2 file found for observation {observation_id}."
+            )
+        value = str(getattr(files, "value", "") or "").strip()
+        arc_name = str(getattr(files, "arc", "") or "").strip()
+        path = _file_record_path(observation.id, "pha2", value, arc_name)
+        if path is None:
+            raise ValueError(f"PHA2 file is missing for observation {observation_id}.")
+
+        phalist = read_pha(str(path))
+        for pha in phalist:
+            tg_m = int(pha.header["TG_M"])
+            tg_part = int(pha.header["TG_PART"])
+            if abs(tg_m) > 1:
+                continue
+            part_name = TG_PART[tg_part]
+            _load_spectral_responses(pha, observation, part_name, tg_m, arc_name)
+            pha.set_analysis(analysis)
+            if grouping_method in GROUPING_PARAMETER:
+                getattr(pha, grouping_method)(grouping_value)
+            spectra.append((observation, part_name, tg_m, pha))
+
+    if not spectra:
+        raise ValueError(
+            "No plottable spectra were found for the selected observations."
+        )
 
     sherpa_plot.set_backend("BokehBackend")
     dataplot = DataPHAPlot()
     legend_items = []
     rendered_count = 0
-    for i, (part_name, tg_m, pha) in enumerate(spectra):
+    multi_observation_plot = len(observations) > 1
+    observation_labels = {}
+    for observation in observations:
+        source = (
+            Source.objects.filter(srcid=observation.srcid).first()
+            if getattr(observation, "srcid", None) is not None
+            else None
+        )
+        observation_labels[observation.id] = _format_observation_label(
+            observation, getattr(source, "source_name", None)
+        )
+    obs_titles = list(dict.fromkeys(observation_labels.values()))
+    plot_title = obs_titles[0] if len(obs_titles) == 1 else ", ".join(obs_titles)
+
+    for i, (observation, part_name, tg_m, pha) in enumerate(spectra):
         dataplot.prepare(pha)
-        dataplot.title = f"ObsID {observation.obsid}"
+        obs_title = observation_labels[observation.id]
+        dataplot.title = plot_title
         dataplot.plot(
-            label=f"{part_name} {tg_m}",
+            label=(
+                f"{obs_title} {part_name} {tg_m}"
+                if multi_observation_plot
+                else f"{part_name} {tg_m}"
+            ),
             linestyle="-",
             marker=None,
             overplot=i != 0,
@@ -525,7 +548,14 @@ def _render_spectral_plot_html(
         renderers = figure.renderers[rendered_count:]
         rendered_count = len(figure.renderers)
         legend_items.append(
-            LegendItem(label=f"{part_name} {tg_m}", renderers=renderers)
+            LegendItem(
+                label=(
+                    f"{obs_title} {part_name} {tg_m}"
+                    if multi_observation_plot
+                    else f"{part_name} {tg_m}"
+                ),
+                renderers=renderers,
+            )
         )
         # end manual legend workaround
 
@@ -649,7 +679,7 @@ def plot_selection(request):
     )
     selected_tgcat_ids = _normalized_obsid_list(raw_tgcat_ids)
     selected_obs_labels = [
-        _selected_observation_plot_label(tgcat_id) for tgcat_id in selected_tgcat_ids
+        _selected_observation_display_name(tgcat_id) for tgcat_id in selected_tgcat_ids
     ]
     is_post = request.method == "POST"
     if is_post:
@@ -664,12 +694,14 @@ def plot_selection(request):
 
     plot_html = None
     plot_error = None
-    if len(selected_tgcat_ids) == 1 and form_is_valid:
+    if selected_tgcat_ids and form_is_valid:
         try:
             grouping_method = cleaned_data.get("grouping_method") or None
             grouping_parameter = GROUPING_PARAMETER.get(grouping_method)
             plot_html = _render_spectral_plot_html(
-                selected_tgcat_ids[0],
+                selected_tgcat_ids[0]
+                if len(selected_tgcat_ids) == 1
+                else selected_tgcat_ids,
                 analysis,
                 grouping_method,
                 cleaned_data.get("group_value") if grouping_parameter else None,

@@ -50,6 +50,101 @@ class FakeQuerySet:
 
 
 class SpectralPlotUnitTests(SimpleTestCase):
+    @patch("catalog.views.sherpa_plot.backend.as_html", return_value="<plot>")
+    @patch("catalog.views.sherpa_plot.set_backend")
+    @patch("catalog.views.DataPHAPlot")
+    @patch("catalog.views.read_rmf", side_effect=["rmf-1", "rmf-2"])
+    @patch("catalog.views.read_arf", side_effect=["arf-1", "arf-2"])
+    @patch("catalog.views.read_pha")
+    @patch("catalog.views._file_record_path")
+    @patch("catalog.views.FileRecord.objects.filter")
+    @patch("catalog.views.Observation.objects.filter")
+    def test_multi_observation_plot_labels_each_spectrum_with_obsid(
+        self,
+        mock_observation_filter,
+        mock_file_filter,
+        mock_file_path,
+        mock_read_pha,
+        mock_read_arf,
+        mock_read_rmf,
+        mock_plot_class,
+        mock_set_backend,
+        mock_as_html,
+    ):
+        from catalog import views
+
+        observations = [
+            SimpleNamespace(id=101, obsid=873, obi=1, srcid=1, instrument="ACIS"),
+            SimpleNamespace(id=202, obsid=873, obi=2, srcid=1, instrument="ACIS"),
+        ]
+        mock_observation_filter.return_value.filter.return_value.first.side_effect = (
+            observations
+        )
+        file_query = (
+            mock_file_filter.return_value.filter.return_value.filter.return_value
+        )
+        file_query.exclude.return_value.exclude.return_value.exclude.return_value.order_by.return_value.first.side_effect = [
+            SimpleNamespace(value="pha2-a.gz", arc="arcA"),
+            SimpleNamespace(value="pha2-b.gz", arc="arcB"),
+        ]
+        spectra = [
+            SimpleNamespace(
+                header={"TG_M": -1, "TG_PART": 3},
+                set_response=MagicMock(),
+                set_analysis=MagicMock(),
+            ),
+            SimpleNamespace(
+                header={"TG_M": 1, "TG_PART": 3},
+                set_response=MagicMock(),
+                set_analysis=MagicMock(),
+            ),
+        ]
+        mock_read_pha.side_effect = [[spectra[0]], [spectra[1]]]
+        mock_file_path.side_effect = lambda observation_id, file_type, value, arc: Path(
+            f"/data/{arc}/{file_type}/tgcid_{observation_id}_{value}"
+        )
+        plotter = mock_plot_class.return_value
+        figure = SimpleNamespace(renderers=[])
+        legend = SimpleNamespace(click_policy=None)
+        figure_grid = SimpleNamespace(children=[(figure, 0, 0)])
+        plotter.plot.side_effect = lambda **kwargs: figure.renderers.extend(
+            [object(), object()]
+        )
+        figure.add_layout = MagicMock(
+            side_effect=lambda added_legend, side: setattr(
+                figure, "legend", added_legend
+            )
+        )
+
+        with (
+            patch.object(
+                views.sherpa_plot.backend, "current_fig", figure_grid, create=True
+            ),
+            patch.object(views.Source.objects, "filter") as source_filter,
+            patch.object(views, "_obsid_has_multiple_obi", return_value=True),
+            patch.object(views, "LegendItem") as mock_legend_item,
+            patch.object(views, "Legend", return_value=legend),
+        ):
+            source_filter.return_value.first.return_value = SimpleNamespace(
+                source_name="CAPELLA"
+            )
+            result = views._render_spectral_plot_html([101, 202])
+
+        self.assertEqual(result, "<plot>")
+        self.assertEqual(
+            [call.kwargs["label"] for call in mock_legend_item.call_args_list],
+            [
+                "ObsID: 873 (OBI: 1, CAPELLA) LEG -1",
+                "ObsID: 873 (OBI: 2, CAPELLA) LEG 1",
+            ],
+        )
+        self.assertEqual(
+            plotter.title,
+            "ObsID: 873 (OBI: 1, CAPELLA), ObsID: 873 (OBI: 2, CAPELLA)",
+        )
+        self.assertEqual(plotter.plot.call_args_list[0].kwargs["overplot"], False)
+        self.assertEqual(plotter.plot.call_args_list[1].kwargs["overplot"], True)
+
     @patch("catalog.views._file_record_path")
     @patch("catalog.views.read_rmf", side_effect=lambda path: f"rmf:{path}")
     @patch("catalog.views.read_arf", side_effect=lambda path: f"arf:{path}")
@@ -167,7 +262,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
             group_counts=MagicMock(),
         )
         mock_observation_filter.return_value.filter.return_value.first.return_value = (
-            SimpleNamespace(id=123, obsid=873)
+            SimpleNamespace(id=123, obsid=873, obi=1, srcid=1)
         )
         pha2_queryset = (
             mock_file_filter.return_value.filter.return_value.filter.return_value
@@ -210,9 +305,14 @@ class SpectralPlotUnitTests(SimpleTestCase):
                 backend_figure,
                 create=True,
             ),
+            patch.object(views, "_obsid_has_multiple_obi", return_value=True),
             patch.object(views, "LegendItem") as mock_legend_item,
             patch.object(views, "Legend", return_value=legend) as mock_legend,
+            patch.object(views.Source.objects, "filter") as source_filter,
         ):
+            source_filter.return_value.first.return_value = SimpleNamespace(
+                source_name="CAPELLA"
+            )
             result = views._render_spectral_plot_html(
                 123, "channel", "group_counts", 8
             )
@@ -285,7 +385,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
                 ),
             ],
         )
-        self.assertEqual(mock_plot.title, "ObsID 873")
+        self.assertEqual(mock_plot.title, "ObsID: 873 (OBI: 1, CAPELLA)")
 
 
 class PlotSelectionViewTests(SimpleTestCase):
@@ -296,7 +396,7 @@ class PlotSelectionViewTests(SimpleTestCase):
         self, mock_observation_filter, mock_source_filter, mock_render_plot
     ):
         mock_observation_filter.return_value.filter.return_value.first.return_value = (
-            SimpleNamespace(id=42, obsid=873, obi=None, reject="N")
+            SimpleNamespace(id=42, obsid=873, obi=None, srcid=1944, reject="N")
         )
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
             source_name="CAPELLA"
@@ -304,6 +404,7 @@ class PlotSelectionViewTests(SimpleTestCase):
 
         get_response = self.client.get("/plot-spectrum/?tgcat_ids=42")
         self.assertEqual(get_response.status_code, 200)
+        self.assertContains(get_response, "Selected: ObsID: 873 (CAPELLA)")
         self.assertContains(get_response, 'value="wavelength" selected')
         self.assertContains(get_response, 'name="group_value"')
         self.assertNotContains(get_response, 'name="num"')
@@ -349,6 +450,15 @@ class PlotSelectionViewTests(SimpleTestCase):
         self.assertEqual(invalid_response.status_code, 200)
         self.assertContains(invalid_response, "num must be a positive integer")
         self.assertEqual(mock_render_plot.call_count, call_count)
+
+        multi_response = self.client.post(
+            "/plot-spectrum/",
+            {"tgcat_ids": ["42", "43"], "analysis": "channel"},
+        )
+        self.assertEqual(multi_response.status_code, 200)
+        self.assertContains(multi_response, 'name="tgcat_ids" value="42"')
+        self.assertContains(multi_response, 'name="tgcat_ids" value="43"')
+        mock_render_plot.assert_called_with([42, 43], "channel", None, None)
 
 
 class GroupingFormTests(SimpleTestCase):

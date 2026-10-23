@@ -7,24 +7,26 @@
     <div>
       <p class="eyebrow">Plotting</p>
       {% if plot_html %}
-        <h1>Selected observation</h1>
+        <h1>{% if selected_tgcat_ids|length > 1 %}Selected observations{% else %}Selected observation{% endif %}</h1>
       {% else %}
         <h1>Plot selected observations</h1>
       {% endif %}
     </div>
     {% if plot_html %}
-      <p class="muted-note">Selected observation: {{ selected_obs_labels|join:", " }}</p>
+      <p class="muted-note">Selected: {{ selected_obs_labels|join:", " }}</p>
     {% else %}
       <p class="muted-note">This page is a placeholder for the plotting workflow. The selected observations are listed below and will be passed to the plotting tool once it is implemented.</p>
     {% endif %}
   </section>
 
-  {% if selected_tgcat_ids|length == 1 %}
+  {% if selected_tgcat_ids %}
     <section class="panel">
       <h2>Plot settings</h2>
       <form method="post" action="{% url 'catalog:plot_spectrum' %}" class="plot-controls" id="plot-settings-form">
         {% csrf_token %}
-        <input type="hidden" name="tgcat_ids" value="{{ selected_tgcat_ids.0 }}" />
+        {% for tgcat_id in selected_tgcat_ids %}
+          <input type="hidden" name="tgcat_ids" value="{{ tgcat_id }}" />
+        {% endfor %}
 
         <div class="plot-control-field">
           <label for="analysis">X-axis units</label>
