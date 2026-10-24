@@ -14,6 +14,21 @@ from catalog.forms import PlotSelectionForm
 OBS_DATE = datetime.datetime(2024, 1, 2, 3, 4, 5)
 
 
+class SecretKeyValidationTests(SimpleTestCase):
+    def test_rejects_missing_or_weak_secret_from_environment(self):
+        from django.core.exceptions import ImproperlyConfigured
+
+        from tgdingo import settings
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(ImproperlyConfigured):
+                settings.get_required_secret("TGDINGO_SECRET_KEY")
+
+        with patch.dict("os.environ", {"TGDINGO_SECRET_KEY": "short"}, clear=True):
+            with self.assertRaises(ImproperlyConfigured):
+                settings.get_required_secret("TGDINGO_SECRET_KEY")
+
+
 class FakeQuerySet:
     def __init__(self, rows):
         self.rows = list(rows)

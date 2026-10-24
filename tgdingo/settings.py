@@ -13,9 +13,47 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.environ.get("TGDINGO_SECRET_KEY", "dev-secret-key")
+
+def _has_minimum_complexity(value: str, min_length: int = 16) -> bool:
+    if len(value) < min_length:
+        return False
+
+    categories = 0
+    if any(ch.islower() for ch in value):
+        categories += 1
+    if any(ch.isupper() for ch in value):
+        categories += 1
+    if any(ch.isdigit() for ch in value):
+        categories += 1
+    if any(not ch.isalnum() for ch in value):
+        categories += 1
+
+    return categories >= 3
+
+
+def get_required_secret(name: str, *, min_length: int = 16) -> str:
+    value = os.environ.get(name)
+    if not value or not value.strip():
+        raise ImproperlyConfigured(
+            f"Environment variable {name!r} is required and must not be empty."
+        )
+
+    if not _has_minimum_complexity(value, min_length=min_length):
+        raise ImproperlyConfigured(
+            f"Environment variable {name!r} is too weak. "
+            f"Use at least {min_length} characters with a mix of letters, numbers, and symbols."
+        )
+
+    return value
+
+
+# SECRET_KEY for signing sessions, CSRF, and other security features.
+# Used by Django to provide cryptographic signing. Keep this value secret in production.
+SECRET_KEY = get_required_secret("TGDINGO_SECRET_KEY")
 DEBUG = os.environ.get("TGDINGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.environ.get("TGDINGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
@@ -71,7 +109,9 @@ else:
             "ENGINE": "django.db.backends.mysql",
             "NAME": os.environ.get("TGDINGO_DB_NAME", "tgcat"),
             "USER": os.environ.get("TGDINGO_DB_USER", "tgcat_reader"),
-            "PASSWORD": os.environ.get("TGDINGO_DB_PASSWORD", "change-me"),
+            # Password for SQL user.
+            # Should be different from the Django SECRET_KEY.
+            "PASSWORD": get_required_secret("TGDINGO_DB_PASSWORD"),
             "HOST": os.environ.get("TGDINGO_DB_HOST", "127.0.0.1"),
             "PORT": os.environ.get("TGDINGO_DB_PORT", "3307"),
             "OPTIONS": {"charset": "utf8mb4"},
