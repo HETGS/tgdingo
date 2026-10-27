@@ -20,6 +20,7 @@ from .forms import GROUPING_PARAMETER, PlotSelectionForm, validate_grouping
 from sherpa.astro.io import read_arf, read_pha
 from sherpa.astro.plot import DataPHAPlot
 import sherpa.plot as sherpa_plot
+from sherpa.stats import Chi2Gehrels
 
 from .models import FileRecord, Observation, Source
 
@@ -47,6 +48,71 @@ DOWNLOAD_DATA_OPTIONS = {
 }
 TG_PART = {1: "HEG", 2: "MEG", 3: "LEG"}
 PLOT_ANALYSIS_MODES = ("wavelength", "channel", "energy")
+
+
+def _reset_sherpa_bokeh_whisker_colors(figure):
+    """Reset Bokeh whiskers to the color of the matching plotted line.
+
+    TEMPORARY WORKAROUND: Sherpa currently creates Bokeh ``Whisker`` objects
+    with their default styling instead of inheriting the plotted line color.
+    In the live Bokeh figure, the whiskers live in the figure layout while the
+    line renderers are in the main renderer list. Match each whisker to the line
+    with the same series order so overplotted datasets keep their own colors.
+    Remove this once the upstream Sherpa bug is fixed.
+    """
+
+    def _apply_whisker_color(whisker, color):
+        whisker.line_color = color
+        if hasattr(whisker, "line_alpha"):
+            whisker.line_alpha = getattr(whisker, "line_alpha", 1)
+
+        alpha = getattr(whisker, "line_alpha", 1)
+        for head in (
+            getattr(whisker, "upper_head", None),
+            getattr(whisker, "lower_head", None),
+        ):
+            if head is None:
+                continue
+            if hasattr(head, "line_color"):
+                head.line_color = color
+            if hasattr(head, "fill_color"):
+                head.fill_color = color
+            if hasattr(head, "line_alpha"):
+                head.line_alpha = alpha
+            if hasattr(head, "fill_alpha"):
+                head.fill_alpha = alpha
+
+    line_colors = []
+    for renderer in getattr(figure, "renderers", ()):
+        glyph = getattr(renderer, "glyph", None)
+        if glyph is None:
+            continue
+        color = getattr(glyph, "line_color", None) or getattr(glyph, "fill_color", None)
+        if color:
+            line_colors.append(color)
+
+    whiskers = []
+    for container in (
+        getattr(figure, "center", ()),
+        getattr(figure, "above", ()),
+        getattr(figure, "below", ()),
+        getattr(figure, "left", ()),
+        getattr(figure, "right", ()),
+    ):
+        for item in container:
+            if type(item).__name__ == "Whisker":
+                whiskers.append(item)
+                continue
+            glyph = getattr(item, "glyph", None)
+            if glyph is not None and type(glyph).__name__ == "Whisker":
+                whiskers.append(glyph)
+
+    if not whiskers or not line_colors:
+        return
+
+    for index, whisker in enumerate(whiskers):
+        color = line_colors[index] if index < len(line_colors) else line_colors[-1]
+        _apply_whisker_color(whisker, color)
 
 
 def _parse_coordinate(value):
@@ -535,8 +601,9 @@ def _render_spectral_plot_html(
     obs_titles = list(dict.fromkeys(observation_labels.values()))
     plot_title = obs_titles[0] if len(obs_titles) == 1 else ", ".join(obs_titles)
 
+    chi2 = Chi2Gehrels()
     for i, (observation, pha) in enumerate(spectra):
-        dataplot.prepare(pha)
+        dataplot.prepare(pha, stat=chi2)
         obs_title = observation_labels[observation.id]
         part_name = TG_PART.get(int(pha.header["TG_PART"]), "Unknown")
         tg_m = int(pha.header["TG_M"])
@@ -550,6 +617,8 @@ def _render_spectral_plot_html(
             linestyle="-",
             marker=None,
             overplot=i != 0,
+            xerrorbars=True,
+            yerrorbars=True,
         )
         # In Sherpa 4.19, the labels set in the plot() call above are not automatically added to the legend,
         # so we manually add them here.
@@ -557,6 +626,10 @@ def _render_spectral_plot_html(
         figure_grid = sherpa_plot.backend.current_fig
         figure = figure_grid.children[0][0]
         renderers = figure.renderers[rendered_count:]
+        # TEMPORARY WORKAROUND: Sherpa/Bokeh currently assigns a default color to
+        # the `Whisker` glyphs, so the error bars do not match the plotted line.
+        # Reset the whisker colors here until the Sherpa bug is fixed.
+        _reset_sherpa_bokeh_whisker_colors(figure)
         rendered_count = len(figure.renderers)
         legend_items.append(
             LegendItem(

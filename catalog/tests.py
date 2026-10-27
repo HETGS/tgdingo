@@ -126,6 +126,48 @@ class SpectralPlotUnitTests(SimpleTestCase):
 
         mock_filter.assert_not_called()
 
+    def test_reset_sherpa_bokeh_whisker_colors_matches_line(self):
+        from catalog import views
+
+        class TeeHead:
+            def __init__(self):
+                self.line_color = "black"
+                self.line_alpha = 1
+
+        class Whisker:
+            def __init__(self):
+                self.line_color = "black"
+                self.line_alpha = 1
+                self.upper_head = TeeHead()
+                self.lower_head = TeeHead()
+
+        class Line:
+            def __init__(self, line_color):
+                self.line_color = line_color
+
+        first_whisker = Whisker()
+        first_line = SimpleNamespace(glyph=Line("red"))
+        second_line = SimpleNamespace(glyph=Line("blue"))
+        second_whisker = Whisker()
+
+        figure = SimpleNamespace(
+            renderers=[first_line, second_line],
+            center=[first_whisker, second_whisker],
+            above=(),
+            below=(),
+            left=(),
+            right=(),
+        )
+
+        views._reset_sherpa_bokeh_whisker_colors(figure)
+
+        self.assertEqual(first_whisker.line_color, "red")
+        self.assertEqual(first_whisker.upper_head.line_color, "red")
+        self.assertEqual(first_whisker.lower_head.line_color, "red")
+        self.assertEqual(second_whisker.line_color, "blue")
+        self.assertEqual(second_whisker.upper_head.line_color, "blue")
+        self.assertEqual(second_whisker.lower_head.line_color, "blue")
+
     @patch("catalog.views.sherpa_plot.backend.as_html", return_value="<plot>")
     @patch("catalog.views.sherpa_plot.set_backend")
     @patch("catalog.views.DataPHAPlot")
@@ -232,12 +274,16 @@ class SpectralPlotUnitTests(SimpleTestCase):
                     linestyle="-",
                     marker=None,
                     overplot=False,
+                    xerrorbars=True,
+                    yerrorbars=True,
                 ),
                 call(
                     label="MEG 1",
                     linestyle="-",
                     marker=None,
                     overplot=True,
+                    xerrorbars=True,
+                    yerrorbars=True,
                 ),
             ],
         )
