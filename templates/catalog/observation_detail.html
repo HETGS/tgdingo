@@ -9,7 +9,8 @@
       <h1>Observation {{ observation.obsid }}{% if show_obi and observation.obi is not None %} (OBI: {{ observation.obi }}){% endif %}</h1>
     </div>
     <div class="header-actions">
-      <a class="secondary-button" href="{% url 'catalog:home' %}">Back to home</a>
+      <a class="button big-button" href="{% url 'catalog:plot_spectrum' %}?tgcat_ids={{ observation.id }}">Plot</a>
+      <a class="button big-button" href="{% url 'catalog:download_selection' %}?obsids={{ observation.id }}">Download</a>
     </div>
   </section>
 

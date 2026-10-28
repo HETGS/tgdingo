@@ -27,6 +27,11 @@ img {
   max-width: 100%;
 }
 
+form {
+  margin: 0.3em;
+  padding: 0;
+}
+
 .container {
   width: min(1140px, calc(100% - 32px));
   margin: 0 auto;
@@ -264,22 +269,38 @@ nav a {
   max-width: 100%;
 }
 
-.search-form button,
-.secondary-button,
-.link-button {
-  transition: all 0.2s ease;
-}
-
-.search-form button {
-  min-height: 52px;
+button,
+.button {
   border: none;
   border-radius: 12px;
-  padding: 0 1.4rem;
   background: linear-gradient(135deg, var(--brand), var(--brand-dark));
   color: white;
-  font-weight: 700;
   cursor: pointer;
   box-shadow: 0 10px 18px rgba(30, 94, 168, 0.18);
+  transition: all 0.2s ease;
+  text-decoration: none;
+  padding: 0.72rem 1rem;
+}
+
+button:hover:not(:disabled) {
+    transform: translateY(-1px);
+}
+
+.big-button {
+  min-height: 52px;
+  font-weight: 700;
+  font-size: 1.2rem;
+}
+
+.small-button {
+    margin-top: 0;
+    padding: 0.45rem 0.7rem;
+    font-size: 0.85rem;
+}
+
+.selection-actions button:disabled {
+  background: revert;
+  cursor: not-allowed;
 }
 
 .search-summary {
@@ -461,39 +482,6 @@ nav a {
 .product-overview p {
   color: var(--muted);
   line-height: 1.6;
-}
-
-.link-button,
-.secondary-button {
-  display: inline-block;
-  text-decoration: none;
-  font-weight: 700;
-  border-radius: 10px;
-  padding: 0.72rem 1rem;
-  margin-top: 0.9rem;
-}
-
-.small-button {
-  margin-top: 0;
-  padding: 0.45rem 0.7rem;
-  font-size: 0.85rem;
-}
-
-.link-button {
-  background: rgba(30, 94, 168, 0.08);
-  color: var(--brand-dark);
-}
-
-.secondary-button {
-  background: #eef3fb;
-  border: 1px solid var(--line);
-  color: var(--text);
-}
-
-.link-button:hover,
-.secondary-button:hover,
-.search-form button:hover {
-  transform: translateY(-1px);
 }
 
 .detail-header {
