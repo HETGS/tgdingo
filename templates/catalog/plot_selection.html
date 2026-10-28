@@ -20,7 +20,7 @@
     <section class="panel">
       <h2>Plot settings</h2>
      <div class="break"></div>
-    <p class="muted-note">Press "Replot" after changing the plot settings.</p>
+    <p class="muted-note">Press "Replot" after changing these plot settings.</p>
       <form method="post" action="{% url 'catalog:plot_spectrum' %}" class="plot-controls" id="plot-settings-form">
         {% csrf_token %}
         {% for tgcat_id in selected_tgcat_ids %}
