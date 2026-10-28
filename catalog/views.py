@@ -10,7 +10,10 @@ from urllib.parse import quote_plus
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
-from bokeh.models import Legend, LegendItem
+from bokeh.embed import components
+from bokeh.layouts import column
+from bokeh.models import Checkbox, CustomJS, Legend, LegendItem
+from bokeh.resources import CDN
 from django.conf import settings
 from django.db import DatabaseError
 from django.http import FileResponse, Http404, HttpResponse
@@ -113,6 +116,41 @@ def _reset_sherpa_bokeh_whisker_colors(figure):
     for index, whisker in enumerate(whiskers):
         color = line_colors[index] if index < len(line_colors) else line_colors[-1]
         _apply_whisker_color(whisker, color)
+
+
+def _collect_sherpa_bokeh_whisker_renderers(figure):
+    """Collect the Bokeh whisker renderers from a Sherpa-generated figure.
+
+    The whiskers can live in the figure layout containers rather than the main
+    renderer list, especially when multiple datasets are overplotted and when
+    Bokeh nests the glyphs in layout children. This helper is intentionally kept
+    separate so the interactive checkbox can target all whiskers in one go.
+    """
+    whiskers = []
+
+    def _walk(node):
+        if node is None:
+            return
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                _walk(item)
+            return
+
+        if type(node).__name__ == "Whisker":
+            whiskers.append(node)
+            return
+
+        glyph = getattr(node, "glyph", None)
+        if glyph is not None and type(glyph).__name__ == "Whisker":
+            whiskers.append(node)
+
+        for attr in ("center", "above", "below", "left", "right", "children"):
+            child = getattr(node, attr, None)
+            if child is not None:
+                _walk(child)
+
+    _walk(figure)
+    return whiskers
 
 
 def _parse_coordinate(value):
@@ -646,14 +684,49 @@ def _render_spectral_plot_html(
     # Since the can't control the default Bokeh figure size from Sherpa,
     # we manually resize the figure here to a rectangular format that should work on most screens.
     figure_grid = sherpa_plot.backend.current_fig
-    if legend_items:
-        figure.add_layout(Legend(items=legend_items), "right")
-        figure.legend.click_policy = "mute"
-    for figure, _, _ in figure_grid.children:
-        figure.width = 960
-        figure.height = 540
+    figure = figure_grid.children[0][0]
+    whisker_renderers = []
+    for plotted_figure, _, _ in figure_grid.children:
+        whisker_renderers.extend(_collect_sherpa_bokeh_whisker_renderers(plotted_figure))
 
-    return sherpa_plot.backend.as_html(lambda: figure_grid)
+    whisker_checkbox = Checkbox(label="Show error bars", active=True)
+    whisker_checkbox.js_on_change(
+        "active",
+        CustomJS(
+            args={"whiskers": whisker_renderers},
+            code="""
+                for (const renderer of whiskers) {
+                    if (!renderer) continue;
+                    if (typeof renderer.visible !== 'undefined') {
+                        renderer.visible = this.active;
+                    }
+                    if (renderer.glyph && typeof renderer.glyph.visible !== 'undefined') {
+                        renderer.glyph.visible = this.active;
+                    }
+                }
+            """,
+        ),
+    )
+
+    figure_legend = Legend(items=legend_items) if legend_items else None
+    figure.toolbar_location = "above"
+    for rendered_figure, _, _ in figure_grid.children:
+        rendered_figure.width = 960
+        rendered_figure.height = 540
+
+    try:
+        plot_layout = column(whisker_checkbox, figure)
+        if figure_legend is not None:
+            figure.add_layout(figure_legend, "right")
+            figure.legend.click_policy = "mute"
+    except (TypeError, ValueError):
+        figure.add_layout(whisker_checkbox, "above")
+        if figure_legend is not None:
+            figure.add_layout(figure_legend, "right")
+            figure.legend.click_policy = "mute"
+        plot_layout = figure
+    div, script = components(plot_layout)
+    return f"{CDN.render_css()}{CDN.render_js()}{div}{script}"
 
 
 def _build_download_zip(selected_obsids, selected_categories):

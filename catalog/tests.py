@@ -2,7 +2,7 @@ import datetime
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 from astropy import units as u
 from astropy.coordinates import SkyCoord
@@ -168,7 +168,29 @@ class SpectralPlotUnitTests(SimpleTestCase):
         self.assertEqual(second_whisker.upper_head.line_color, "blue")
         self.assertEqual(second_whisker.lower_head.line_color, "blue")
 
-    @patch("catalog.views.sherpa_plot.backend.as_html", return_value="<plot>")
+    def test_collect_sherpa_bokeh_whisker_renderers_finds_nested_whiskers(self):
+        from catalog import views
+
+        class Whisker:
+            pass
+
+        whisker_renderer = SimpleNamespace(glyph=Whisker())
+        other_renderer = SimpleNamespace(glyph=object())
+        figure = SimpleNamespace(
+            renderers=[other_renderer],
+            center=[whisker_renderer],
+            above=(),
+            below=(),
+            left=(),
+            right=(),
+        )
+
+        self.assertEqual(
+            views._collect_sherpa_bokeh_whisker_renderers(figure),
+            [whisker_renderer],
+        )
+
+    @patch("catalog.views.components", return_value=("<div>", "<script></script>"))
     @patch("catalog.views.sherpa_plot.set_backend")
     @patch("catalog.views.DataPHAPlot")
     @patch("catalog.views._setup_spectra")
@@ -179,7 +201,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
         mock_setup_spectra,
         mock_plot_class,
         mock_set_backend,
-        mock_as_html,
+        mock_components,
     ):
         first_spectrum = SimpleNamespace(
             header={"TG_M": -1, "TG_PART": 1},
@@ -237,7 +259,8 @@ class SpectralPlotUnitTests(SimpleTestCase):
                 123, "channel", "group_counts", 8
             )
 
-        self.assertEqual(result, "<plot>")
+        self.assertIn("<div>", result)
+        self.assertIn("<script", result)
         mock_setup_spectra.assert_called_once_with(123)
         self.assertEqual(bokeh_figure.width, 960)
         self.assertEqual(bokeh_figure.height, 540)
@@ -248,15 +271,16 @@ class SpectralPlotUnitTests(SimpleTestCase):
             ["HEG -1", "MEG 1"],
         )
         self.assertEqual(mock_legend.call_count, 1)
-        bokeh_figure.add_layout.assert_called_once_with(legend, "right")
-        mock_as_html.assert_called_once()
-        with patch.object(
-            views.sherpa_plot.backend,
-            "current_fig",
-            backend_figure,
-            create=True,
-        ):
-            self.assertIs(mock_as_html.call_args.args[0](), backend_figure)
+        self.assertEqual(bokeh_figure.add_layout.call_count, 2)
+        self.assertEqual(
+            bokeh_figure.add_layout.call_args_list[0],
+            call(ANY, "above"),
+        )
+        self.assertEqual(
+            bokeh_figure.add_layout.call_args_list[1],
+            call(legend, "right"),
+        )
+        mock_components.assert_called_once_with(bokeh_figure)
         plotted_spectra = [call.args[0] for call in mock_plot.prepare.call_args_list]
         self.assertEqual(plotted_spectra, [first_spectrum, second_spectrum])
         self.assertIsNot(plotted_spectra[0], first_spectrum)
