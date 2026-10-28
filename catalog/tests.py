@@ -510,6 +510,18 @@ class CatalogSmokeTests(TestCase):
                 simbad_ID="Castor",
                 ned_ID=None,
             ),
+            SimpleNamespace(
+                srcid=1944,
+                source_name="CAPELLA",
+                simbad_ID="Capella",
+                ned_ID=None,
+            ),
+            SimpleNamespace(
+                srcid=1945,
+                source_name="CASTOR",
+                simbad_ID="Castor",
+                ned_ID=None,
+            ),
         ]
         file_queryset = mock_file_filter.return_value
         file_queryset.filter.return_value.exclude.return_value.exclude.return_value.order_by.return_value.all.return_value = []
@@ -524,6 +536,13 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "summary plots")
         self.assertNotContains(response, "evt2_10.fits")
         self.assertNotContains(response, "pha_11.fits")
+
+        response = self.client.get(
+            reverse("catalog:download_selection") + "?tgcat_ids=10&tgcat_ids=11"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Selected observations")
 
     @patch(
         "catalog.views._render_spectral_plot_html", return_value="<div>Bokeh plot</div>"
@@ -565,7 +584,7 @@ class CatalogSmokeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Bokeh plot")
-        self.assertContains(response, "Selected observation")
+        self.assertContains(response, "Selected: ObsID: 873 (CAPELLA)")
         self.assertContains(response, 'value="wavelength" selected')
         mock_render_plot.assert_called_once_with(42, "wavelength", None, None)
 

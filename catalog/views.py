@@ -601,7 +601,7 @@ def _format_observation_label(observation, source_name):
     if _obsid_has_multiple_obi(observation.obsid):
         return f"ObsID: {observation.obsid} (OBI: {observation.obi}, {source_name})"
     else:
-        return f"ObsID: {observation.obsid} ({sname})"
+        return f"ObsID: {observation.obsid} ({source_name})"
 
 
 def _selected_observation_display_name(observation_id):
@@ -924,7 +924,12 @@ def _build_download_zip(selected_obsids, selected_categories):
 
 def download_selection(request):
     """Render the bulk-download selection page or return a ZIP archive for the chosen groups."""
-    raw_obsids = request.GET.getlist("obsids") + request.POST.getlist("obsids")
+    raw_obsids = (
+        request.GET.getlist("obsids")
+        + request.POST.getlist("obsids")
+        + request.GET.getlist("tgcat_ids")
+        + request.POST.getlist("tgcat_ids")
+    )
     selected_obsids = _normalized_obsid_list(raw_obsids)
 
     selected_obs_labels = [
@@ -964,6 +969,7 @@ def download_selection(request):
             "selected_obs_labels": selected_obs_labels,
             "selected_categories": selected_categories,
             "download_options": DOWNLOAD_DATA_OPTIONS,
+            "plot_tgcat_ids": selected_obsids,
         },
     )
 
@@ -1010,6 +1016,7 @@ def plot_selection(request):
         "catalog/plot_selection.html",
         {
             "selected_tgcat_ids": selected_tgcat_ids,
+            "plot_tgcat_ids": selected_tgcat_ids,
             "selected_obs_labels": selected_obs_labels,
             "analysis": analysis,
             "plot_analysis_modes": PLOT_ANALYSIS_MODES,
@@ -1179,6 +1186,7 @@ def observation_detail(request, obsid_slug):
     if observation is None:
         raise Http404("Observation not found.")
 
+    applicable_tgcat_ids = list(queryset.values_list("id", flat=True))
     source = Source.objects.filter(srcid=observation.srcid).first()
     show_obi = _obsid_has_multiple_obi(observation.obsid)
 
@@ -1214,6 +1222,8 @@ def observation_detail(request, obsid_slug):
         "observation_date_iso": observation_date_iso,
         "notes_text": _as_plain_text(getattr(observation, "comments", None)),
         "preview_images": _preview_images_by_source(obsid, requested_obi),
+        "plot_tgcat_ids": applicable_tgcat_ids,
+        "download_obsids": applicable_tgcat_ids,
     }
     return render(request, "catalog/observation_detail.html", context)
 
