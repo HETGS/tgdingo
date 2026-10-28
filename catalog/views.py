@@ -11,8 +11,8 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
 from bokeh.embed import components
-from bokeh.layouts import column
-from bokeh.models import Checkbox, CustomJS, Legend, LegendItem
+from bokeh.layouts import column, row
+from bokeh.models import Checkbox, CustomJS, Legend, LegendItem, Select
 from bokeh.resources import CDN
 from django.conf import settings
 from django.db import DatabaseError
@@ -151,6 +151,92 @@ def _collect_sherpa_bokeh_whisker_renderers(figure):
 
     _walk(figure)
     return whiskers
+
+
+def _collect_plot_renderers(figure):
+    """Collect the renderers used for plotted data, including nested figure layout children.
+
+    The Sherpa-generated Bokeh figure can include renderers directly on the figure
+    object or nested under layout containers, so we gather both forms before wiring
+    custom JavaScript callbacks.
+    """
+    plot_renderers = []
+    seen = set()
+
+    def _walk(node):
+        if node is None:
+            return
+        if isinstance(node, (list, tuple)):
+            for item in node:
+                _walk(item)
+            return
+
+        if hasattr(node, "data_source") and getattr(node, "data_source", None) is not None:
+            renderer_id = id(node)
+            if renderer_id not in seen:
+                seen.add(renderer_id)
+                plot_renderers.append(node)
+
+        for attr in ("renderers", "center", "above", "below", "left", "right", "children"):
+            child = getattr(node, attr, None)
+            if child is not None:
+                _walk(child)
+
+    _walk(figure)
+    return plot_renderers
+
+
+def _make_y_unit_select(y_axis, y_sources, y_exposures, y_label):
+    """Build the "Y unit" dropdown that rescales the y data in the browser.
+
+    Options: "sec" (as plotted, a rate per second), "ks" (rate per kilosecond,
+    values x1000) and "exposure" (values x exposure time, i.e. plain counts,
+    with the time unit dropped from the axis label).
+
+    ``y_sources`` are all ColumnDataSources holding y values (lines and error
+    bars); ``y_exposures`` holds the exposure in seconds of the spectrum that
+    each source belongs to. The original columns are cached in the browser so
+    switching back and forth never accumulates rounding errors.
+    """
+    select = Select(title="Y unit:", value="sec", options=["sec", "ks", "exposure"])
+    select.js_on_change(
+        "value",
+        CustomJS(
+            args={
+                "axis": y_axis,
+                "sources": y_sources,
+                "exposures": [float(exposure) for exposure in y_exposures],
+                "base_y_label": y_label,
+            },
+            code="""
+                const unit = cb_obj.value;
+                if (unit === 'ks') {
+                    axis.axis_label = base_y_label.replace(/sec/g, 'ks');
+                } else if (unit === 'exposure') {
+                    axis.axis_label = base_y_label.replace(/\\/sec/g, '');
+                } else {
+                    axis.axis_label = base_y_label;
+                }
+
+                // Columns arrive in the browser as typed arrays, not Arrays.
+                sources.forEach((source, i) => {
+                    const scale = (unit === 'ks') ? 1000
+                        : (unit === 'exposure') ? exposures[i] : 1;
+                    if (!source.__tg_orig_y) source.__tg_orig_y = {};
+                    const orig = source.__tg_orig_y;
+                    const new_data = Object.assign({}, source.data);
+                    for (const key of ['y', 'lower', 'upper']) {
+                        const col = source.data[key];
+                        if (col == null || typeof col.length !== 'number') continue;
+                        if (!(key in orig)) orig[key] = Float64Array.from(col);
+                        new_data[key] = orig[key].map((v) => v * scale);
+                    }
+                    source.data = new_data;
+                });
+            """,
+        ),
+    )
+    return select
 
 
 def _parse_coordinate(value):
@@ -625,6 +711,8 @@ def _render_spectral_plot_html(
     dataplot = DataPHAPlot()
     legend_items = []
     rendered_count = 0
+    # source id -> (ColumnDataSource, exposure in s) for all y data in the plot
+    y_source_exposure = {}
     multi_observation_plot = len(observations) > 1
     observation_labels = {}
     for observation in observations:
@@ -669,6 +757,15 @@ def _render_spectral_plot_html(
         # Reset the whisker colors here until the Sherpa bug is fixed.
         _reset_sherpa_bokeh_whisker_colors(figure)
         rendered_count = len(figure.renderers)
+        # Remember which spectrum's exposure belongs to each new data source
+        # (lines: ``data_source``, error bars: ``Whisker.source``).
+        for node in _collect_plot_renderers(figure) + _collect_sherpa_bokeh_whisker_renderers(figure):
+            node_source = getattr(node, "data_source", None) or getattr(node, "source", None)
+            if node_source is not None and node_source.id not in y_source_exposure:
+                y_source_exposure[node_source.id] = (
+                    node_source,
+                    getattr(pha, "exposure", None) or 1.0,
+                )
         legend_items.append(
             LegendItem(
                 label=(
@@ -707,6 +804,15 @@ def _render_spectral_plot_html(
             """,
         ),
     )
+    try:
+        y_axis = figure.yaxis[0]
+        y_label = y_axis.axis_label or ""
+    except (AttributeError, IndexError):
+        y_axis, y_label = None, ""
+
+    y_sources = [entry[0] for entry in y_source_exposure.values()]
+    y_exposures = [entry[1] for entry in y_source_exposure.values()]
+    y_unit_select = _make_y_unit_select(y_axis, y_sources, y_exposures, y_label)
 
     figure_legend = Legend(items=legend_items) if legend_items else None
     figure.toolbar_location = "above"
@@ -714,8 +820,9 @@ def _render_spectral_plot_html(
         rendered_figure.width = 960
         rendered_figure.height = 540
 
+    widget_row = row(whisker_checkbox, y_unit_select)
     try:
-        plot_layout = column(whisker_checkbox, figure)
+        plot_layout = column(widget_row, figure)
         if figure_legend is not None:
             figure.add_layout(figure_legend, "right")
             figure.legend.click_policy = "mute"

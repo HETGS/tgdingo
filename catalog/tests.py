@@ -190,6 +190,29 @@ class SpectralPlotUnitTests(SimpleTestCase):
             [whisker_renderer],
         )
 
+    def test_collect_plot_renderers_includes_direct_and_nested_renderers(self):
+        from catalog import views
+
+        class FakeGlyphRenderer:
+            def __init__(self):
+                self.data_source = object()
+
+        direct_renderer = FakeGlyphRenderer()
+        nested_renderer = FakeGlyphRenderer()
+        figure = SimpleNamespace(
+            renderers=[direct_renderer],
+            center=[nested_renderer],
+            above=(),
+            below=(),
+            left=(),
+            right=(),
+        )
+
+        self.assertEqual(
+            views._collect_plot_renderers(figure),
+            [direct_renderer, nested_renderer],
+        )
+
     @patch("catalog.views.components", return_value=("<div>", "<script></script>"))
     @patch("catalog.views.sherpa_plot.set_backend")
     @patch("catalog.views.DataPHAPlot")
@@ -544,7 +567,7 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "Bokeh plot")
         self.assertContains(response, "Selected observation")
         self.assertContains(response, 'value="wavelength" selected')
-        mock_render_plot.assert_called_once_with(42, "wavelength")
+        mock_render_plot.assert_called_once_with(42, "wavelength", None, None)
 
         response = self.client.post(
             reverse("catalog:plot_spectrum"),
@@ -555,7 +578,7 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, 'value="channel" selected')
         self.assertEqual(
             mock_render_plot.call_args_list,
-            [call(42, "wavelength"), call(42, "channel")],
+            [call(42, "wavelength", None, None), call(42, "channel", None, None)],
         )
 
     @patch("catalog.views.Source.objects.filter")
