@@ -384,13 +384,7 @@ def _observation_result_entries(observations, source=None):
         observation_date_iso = observation.date_obs.strftime("%Y-%m-%d %H:%M:%S")
 
         result = {
-            "name": (
-                getattr(source_for_observation, "source_name", None)
-                or getattr(source_for_observation, "simbad_ID", None)
-                or getattr(source_for_observation, "ned_ID", None)
-                or getattr(observation, "target", None)
-                or str(observation.obsid)
-            ),
+            "name": source_for_observation.source_name,
             "observation_id": observation.obsid,
             "obi": observation.obi,
             "show_obi": obsid_counts.get(observation.obsid, 0) > 1,
@@ -602,11 +596,10 @@ def _normalized_obsid_list(values):
     return list(dict.fromkeys(selected))
 
 
-def _format_observation_label(observation, source_name=None):
+def _format_observation_label(observation, source_name):
     """Format an observation label consistently across the page and plot."""
-    sname = source_name or "Unknown"
     if _obsid_has_multiple_obi(observation.obsid):
-        return f"ObsID: {observation.obsid} (OBI: {observation.obi}, {sname})"
+        return f"ObsID: {observation.obsid} (OBI: {observation.obi}, {source_name})"
     else:
         return f"ObsID: {observation.obsid} ({sname})"
 
@@ -619,7 +612,7 @@ def _selected_observation_display_name(observation_id):
     if observation is None:
         return f"(ObsID: {observation_id}, Unknown)"
     source = Source.objects.filter(srcid=observation.srcid).first()
-    return _format_observation_label(observation, getattr(source, "source_name", None))
+    return _format_observation_label(observation, source.source_name)
 
 
 def _file_record_path(observation_id, file_type, value, arc_name=None):
@@ -751,7 +744,7 @@ def _render_spectral_plot_html(
             else None
         )
         observation_labels[observation.id] = _format_observation_label(
-            observation, getattr(source, "source_name", None)
+            observation, source.source_name
         )
     obs_titles = list(dict.fromkeys(observation_labels.values()))
     plot_title = obs_titles[0] if len(obs_titles) == 1 else ", ".join(obs_titles)
@@ -1098,6 +1091,47 @@ def _preview_image_entries_for_observation(observation):
     return image_rows
 
 
+def _preview_images_by_source(obsid, requested_obi=None):
+    """Group preview images by source, optionally by OBI when the ObsID has multiple OBIs."""
+    queryset = (
+        Observation.objects.filter(obsid=obsid).filter(reject="N").order_by("obi", "id")
+    )
+    if requested_obi is not None:
+        queryset = queryset.filter(obi=requested_obi)
+
+    show_obi = _obsid_has_multiple_obi(obsid)
+    rows = list(queryset.all())
+
+    groups = []
+    for observation in rows:
+        source = Source.objects.filter(srcid=observation.srcid).first()
+        source_label = source.source_name
+
+        images = _preview_image_entries_for_observation(observation)
+        if not images:
+            continue
+
+        obi = observation.obi if show_obi and observation.obi is not None else None
+        if obi is None:
+            groups.append({"source_label": source_label, "obi": None, "images": images})
+            continue
+
+        existing = next(
+            (
+                group
+                for group in groups
+                if group["source_label"] == source_label and group["obi"] == obi
+            ),
+            None,
+        )
+        if existing is not None:
+            existing["images"].extend(images)
+        else:
+            groups.append({"source_label": source_label, "obi": obi, "images": images})
+
+    return groups
+
+
 def preview_image(request, filename):
     """Serve a preview image from the configured PNG directory."""
     target = (PREVIEW_IMAGE_ROOT / filename).resolve()
@@ -1148,13 +1182,7 @@ def observation_detail(request, obsid_slug):
     source = Source.objects.filter(srcid=observation.srcid).first()
     show_obi = _obsid_has_multiple_obi(observation.obsid)
 
-    source_label = (
-        getattr(source, "source_name", None)
-        or getattr(source, "simbad_ID", None)
-        or getattr(source, "ned_ID", None)
-        or observation.target
-        or "Unknown target"
-    )
+    source_label = source.source_name
     source_url = None
     if (
         source
@@ -1183,9 +1211,9 @@ def observation_detail(request, obsid_slug):
             else getattr(observation, "decl", None),
         },
         "exposure_ks": round(observation.exposure / 1000.0),
-        "preview_images": _preview_image_entries_for_observation(observation),
         "observation_date_iso": observation_date_iso,
         "notes_text": _as_plain_text(getattr(observation, "comments", None)),
+        "preview_images": _preview_images_by_source(obsid, requested_obi),
     }
     return render(request, "catalog/observation_detail.html", context)
 

@@ -85,20 +85,32 @@
     </div>
   </section>
 
-  <div class="preview-gallery">
-    {% for image in preview_images %}
-      <a
-        class="preview-card-link"
-        href="{% url 'catalog:preview_image' image.filename %}"
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="Open full-size version of {{ image.label }}"
-      >
-        <figure class="preview-card">
-          <img src="{% url 'catalog:preview_image' image.filename %}" alt="{{ image.label }}" />
-          <figcaption>{{ image.label }}</figcaption>
-        </figure>
-      </a>
-    {% endfor %}
-  </div>
+  {% for group in preview_images %}
+    <section class="panel">
+      <h3>{{ group.source_label }}</h3>
+      {% if group.obi is not None %}
+        <p class="section-label">OBI {{ group.obi }}</p>
+      {% endif %}
+      <div class="preview-gallery">
+        {% for image in group.images %}
+          <a
+            class="preview-card-link"
+            href="{% url 'catalog:preview_image' image.filename %}"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Open full-size version of {{ image.label }}"
+          >
+            <figure class="preview-card">
+              <img src="{% url 'catalog:preview_image' image.filename %}" alt="{{ image.label }}" />
+              <figcaption>{{ image.label }}</figcaption>
+            </figure>
+          </a>
+        {% endfor %}
+      </div>
+    </section>
+  {% empty %}
+    <section class="panel empty-state">
+      <p class="muted-note">No preview images are available for this observation.</p>
+    </section>
+  {% endfor %}
 {% endblock %}

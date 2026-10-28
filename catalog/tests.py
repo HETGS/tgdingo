@@ -682,6 +682,9 @@ class CatalogSmokeTests(TestCase):
             date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            observation
+        ]
 
         source = SimpleNamespace(
             srcid=1944,
@@ -754,6 +757,9 @@ class CatalogSmokeTests(TestCase):
             date_obs=OBS_DATE,
         )
         mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = first_row
+        mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+            first_row
+        ]
         mock_source_filter.return_value.first.return_value = SimpleNamespace(
             srcid=999,
             source_name="DUPLICATE",
@@ -810,7 +816,9 @@ class CatalogSmokeTests(TestCase):
         ]
         queryset = MagicMock()
         queryset.first.return_value = rows[0]
+        queryset.all.return_value = rows
         queryset.filter.return_value.first.return_value = rows[1]
+        queryset.filter.return_value.all.return_value = [rows[1]]
         mock_obs_filter.return_value.filter.return_value.order_by.return_value = (
             queryset
         )
@@ -940,6 +948,9 @@ class CatalogSmokeTests(TestCase):
                 date_obs=OBS_DATE,
             )
             mock_obs_filter.return_value.filter.return_value.order_by.return_value.first.return_value = observation
+            mock_obs_filter.return_value.filter.return_value.order_by.return_value.all.return_value = [
+                observation
+            ]
             mock_source_filter.return_value.first.return_value = SimpleNamespace(
                 source_name="CAPELLA",
                 simbad_ID="Capella",
