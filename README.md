@@ -1,9 +1,19 @@
-I used the following which installed too much, e.g. scipy (as recommended astropy dependency).
-Might not even need sherpa but start with all I can think of right now so I don't have to re-install too much later.
-Can minimize package list later.
+Project environment
+------------------
 
+Use the dedicated conda environment named `tgdingo` for development and testing.
+The canonical dependency list is tracked in [`environment.yml`](./environment.yml); there is no lockfile at this stage.
 
-conda create -n tgdingo -c https://cxc.cfa.harvard.edu/conda/sherpa -c conda-forge sherpa mysqlclient mysql-server astropy numpy matplotlib bokeh django mysql
+To create the environment:
+
+```bash
+conda env create -f environment.yml
+conda activate tgdingo
+```
+
+This intentionally uses the Sherpa conda channel rather than installing Sherpa via pip, because the pip build path can fail on this system due to missing native build dependencies (for example, `fftw3`/`pkg-config`).
+
+The optional [`requirements.txt`](./requirements.txt) file is kept minimal and is only for any pip-managed dependencies that are not already provided by the conda environment.
 
 Notes to help me read SQL (which I'm not good at)
 -------------------------------------------------
@@ -35,3 +45,7 @@ This could be kept as an issue list on a project repro, but in the early stage, 
 - error reporting and logging information to see download statistics and errors.
 
 - Obsid 433 has 3 OBIs (object "MCG -6-30-15"). Check in testing that it works.
+
+- Tooltip in bokeh plots?
+
+- Plotting for lightcurves?

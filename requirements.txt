@@ -1,0 +1,4 @@
+# Optional pip-only dependencies for tgdingo.
+# Keep this file intentionally minimal; the canonical environment is managed by
+# conda via environment.yml so that Sherpa is installed from the supported Sherpa
+# channel instead of being built from source via pip.
