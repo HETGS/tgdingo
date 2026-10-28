@@ -1,0 +1,14 @@
+SQL files are in
+/nfs/zaphod/d1/cxc/tgcat/TGCat/db_backup
+
+individual files are in /nfs/zaphod/d1/cxc/tgcat/TGCat/archive
+don't simply "ls" in there, takes forever on zaphod.
+Use unsorted listing
+[guenther@ly-eta arcA]$ ls lc -1U | head -5
+tgcid_3918_lc_bg.gz
+tgcid_6315_lc.gz
+tgcid_3299_lc_bg.gz
+tgcid_4038_lc.gz
+tgcid_2772_lc_bg.gz
+
+

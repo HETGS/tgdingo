@@ -226,7 +226,7 @@ def _make_y_unit_select(y_axis, y_sources, y_exposures, y_label):
     each source belongs to. The original columns are cached in the browser so
     switching back and forth never accumulates rounding errors.
     """
-    select = Select(title="Y unit:", value="sec", options=["sec", "ks", "exposure"])
+    select = Select(title="time:", value="sec", options=["sec", "ks", "exposure"])
     select.js_on_change(
         "value",
         CustomJS(
