@@ -51,7 +51,20 @@ DOWNLOAD_DATA_OPTIONS = {
 }
 TG_PART = {1: "HEG", 2: "MEG", 3: "LEG"}
 PLOT_ANALYSIS_MODES = ("wavelength", "channel", "energy")
-
+IMAGE_LABLES = {
+    "summary_flux_overview": "Overview spectrum",
+    "summary_im-b": "Image and orientation",
+    "summary_im-a": "Image around 0th order",
+    "summary_lc": "Light curve",
+    "summary_imsp": "Extraction regions",
+    "summary_im_osum": "Order sorting",
+    "summary_spf": "Grating spectrum (page 1)",
+    "summary_spf-1": "Grating spectrum (page 2)",
+    "summary_spc": "Grating spectrum (page 1)",
+    "summary_spc-1": "Grating spectrum (page 2)",
+    "summary_spc-2": "Grating spectrum (page 3)",
+    "summary_spc-3": "Grating spectrum (page 4)",
+}
 
 def _reset_sherpa_bokeh_whisker_colors(figure):
     """Reset Bokeh whiskers to the color of the matching plotted line.
@@ -1095,10 +1108,14 @@ def _preview_image_entries_for_observation(observation):
             if not target.exists() or not target.is_file():
                 continue
 
-            label = filename.removeprefix(f"tgcid_{observation.id}_").removesuffix(
+            name = filename.removeprefix(f"tgcid_{observation.id}_").removesuffix(
                 ".png"
             )
-            image_rows.append({"filename": filename, "label": label})
+            thumbnail = f"tgcid_{observation.id}_{name}_thumb.png"
+            label = IMAGE_LABLES.get(name, name)
+            image_rows.append(
+                {"filename": filename, "label": label, "thumbnail": thumbnail}
+            )
 
     return image_rows
 
