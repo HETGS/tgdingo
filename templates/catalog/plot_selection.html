@@ -10,7 +10,7 @@
     </div>
     <div class="header-actions">
         <a class="button big-button"
-            href="{% url 'catalog:download_selection' %}?{% for tgcat_id in plot_tgcat_ids %}{% if not forloop.first %}&{% endif %}tgcat_ids={{ tgcat_id }}{% endfor %}">Download</a>
+            href="{% url 'catalog:download_selection' %}?{% for tgcat_id in plot_tgcat_ids %}{% if not forloop.first %}&{% endif %}tgcat_ids={{ tgcat_id }}{% endfor %}">Download data</a>
     </div>
     <div class="break"></div>
     <p class="muted-note">Selected: {{ selected_obs_labels|join:", " }}</p>
@@ -18,7 +18,6 @@
 
   {% if selected_tgcat_ids %}
     <section class="panel">
-      <h2>Plot settings</h2>
      <div class="break"></div>
     <p class="muted-note">Press "Replot" after changing these plot settings.</p>
       <form method="post" action="{% url 'catalog:plot_spectrum' %}" class="plot-controls" id="plot-settings-form">
