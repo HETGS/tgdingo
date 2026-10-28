@@ -186,6 +186,34 @@ def _collect_plot_renderers(figure):
     return plot_renderers
 
 
+def _link_whisker_muting(line_renderers, whiskers):
+    """Make error bars follow their line when it is muted via the legend.
+
+    Bokeh's ``Whisker`` has no ``muted`` state and cannot be part of a
+    ``LegendItem``, so clicking the legend (``click_policy="mute"``) only fades
+    the line. This callback fades the whiskers of the same dataset to the same
+    alpha Bokeh uses for muted lines (``muted_alpha`` default, 0.2) and restores
+    their original alpha when the line is un-muted.
+    """
+    callback = CustomJS(
+        args={"whiskers": whiskers},
+        code="""
+            const muted = cb_obj.muted;
+            for (const whisker of whiskers) {
+                for (const obj of [whisker, whisker.upper_head, whisker.lower_head]) {
+                    if (!obj) continue;
+                    if (obj.__tg_alpha === undefined) obj.__tg_alpha = obj.line_alpha;
+                    obj.line_alpha = muted ? 0.2 : obj.__tg_alpha;
+                }
+                // Head (tee) property changes alone do not trigger a redraw.
+                whisker.change.emit();
+            }
+        """,
+    )
+    for line_renderer in line_renderers:
+        line_renderer.js_on_change("muted", callback)
+
+
 def _make_y_unit_select(y_axis, y_sources, y_exposures, y_label):
     """Build the "Y unit" dropdown that rescales the y data in the browser.
 
@@ -713,6 +741,7 @@ def _render_spectral_plot_html(
     rendered_count = 0
     # source id -> (ColumnDataSource, exposure in s) for all y data in the plot
     y_source_exposure = {}
+    linked_whisker_ids = set()
     multi_observation_plot = len(observations) > 1
     observation_labels = {}
     for observation in observations:
@@ -757,6 +786,16 @@ def _render_spectral_plot_html(
         # Reset the whisker colors here until the Sherpa bug is fixed.
         _reset_sherpa_bokeh_whisker_colors(figure)
         rendered_count = len(figure.renderers)
+        dataset_whiskers = [
+            whisker
+            for whisker in _collect_sherpa_bokeh_whisker_renderers(figure)
+            if whisker.id not in linked_whisker_ids
+        ]
+        linked_whisker_ids.update(whisker.id for whisker in dataset_whiskers)
+        if dataset_whiskers:
+            _link_whisker_muting(
+                [r for r in renderers if hasattr(r, "muted")], dataset_whiskers
+            )
         # Remember which spectrum's exposure belongs to each new data source
         # (lines: ``data_source``, error bars: ``Whisker.source``).
         for node in _collect_plot_renderers(figure) + _collect_sherpa_bokeh_whisker_renderers(figure):
