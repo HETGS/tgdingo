@@ -534,6 +534,7 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "ARF, RMF, PHA2")
         self.assertContains(response, "light curves")
         self.assertContains(response, "summary plots")
+        self.assertContains(response, "Choose one or more file groups for the selected observations.")
         self.assertNotContains(response, "evt2_10.fits")
         self.assertNotContains(response, "pha_11.fits")
 
@@ -542,7 +543,9 @@ class CatalogSmokeTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Selected observations")
+        self.assertContains(response, "Selected:")
+        self.assertContains(response, "CAPELLA")
+        self.assertContains(response, "CASTOR")
 
     @patch(
         "catalog.views._render_spectral_plot_html", return_value="<div>Bokeh plot</div>"

@@ -42,12 +42,12 @@ PREVIEW_IMAGE_ROOT = Path(
     )
 )
 DOWNLOAD_DATA_OPTIONS = {
-    "ARF, RMF, PHA2": ["arf", "rmf", "pha2"],
-    "PHA Type 1": ["pha1"],
-    "light curves": ["lc"],
-    "summary plots": ["sum"],
-    "obspar": ["obspar"],
-    "Event files (evt2)": ["evt2"],
+    "ARF, RMF, PHA2": [["arf", "rmf", "pha2"], True],
+    "PHA Type 1": [["pha1"], False],
+    "light curves": [["lc"], False],
+    "summary plots": [["sum"], False],
+    "obspar": [["obspar"], False],
+    "Event files (evt2)": [["evt2"], False],
 }
 TG_PART = {1: "HEG", 2: "MEG", 3: "LEG"}
 PLOT_ANALYSIS_MODES = ("wavelength", "channel", "energy")
@@ -875,7 +875,7 @@ def _build_download_zip(selected_obsids, selected_categories):
     allowed_types = {
         file_type.lower()
         for category in selected_categories
-        for file_type in DOWNLOAD_DATA_OPTIONS.get(category, [])
+        for file_type in DOWNLOAD_DATA_OPTIONS.get(category, [[], False])[0]
     }
 
     # Individual data files in the database are already compressed
@@ -958,8 +958,13 @@ def download_selection(request):
         response["Content-Disposition"] = 'attachment; filename="tgcat_selection.zip"'
         return response
 
-    selected_categories = request.GET.getlist("categories") or list(
-        DOWNLOAD_DATA_OPTIONS
+    default_selected_categories = [
+        category
+        for category, (_, is_selected_by_default) in DOWNLOAD_DATA_OPTIONS.items()
+        if is_selected_by_default
+    ]
+    selected_categories = (
+        request.GET.getlist("categories") or default_selected_categories
     )
     return render(
         request,
