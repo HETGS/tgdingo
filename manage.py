@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# Copyright (C) 2026  MIT - see LICENSE.md
 """Django's command-line utility for administrative tasks."""
 import os
 import sys

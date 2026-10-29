@@ -1,3 +1,4 @@
+# Copyright (C) 2026  MIT - see LICENSE.md
 """
 Django settings for tgdingo project.
 

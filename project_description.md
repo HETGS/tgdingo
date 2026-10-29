@@ -1,3 +1,4 @@
+# Copyright (C) 2026  MIT - see LICENSE.md
 TGCat: A database of transmission grating spectra
 =================================================
 We are building a website to serve the data products of the Chandra Transmission Grating Catalog (TGCat). The website will allow users to search for and download spectra, light curves, and other data products from the TGCat database. The website will also provide tools for visualizing and analyzing the data.

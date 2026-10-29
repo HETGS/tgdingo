@@ -1,3 +1,4 @@
+# Copyright (C) 2026  MIT - see LICENSE.md
 from bokeh.models import CustomJS, Select
 
 __all__ = ["collect_plot_renderers",

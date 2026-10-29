@@ -1,3 +1,4 @@
+# Copyright (C) 2026  MIT - see LICENSE.md
 name: tgdingo
 channels:
   - https://cxc.cfa.harvard.edu/conda/sherpa

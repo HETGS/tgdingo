@@ -1,3 +1,6 @@
+# License
+Licensed under the GPL v3 license - see LICENSE.md
+
 # Manual setup for the TGCat MySQL target database
 
 This is the verified setup flow for the current project state. It is based on the actual working MySQL installation in the current conda environment and on the project’s real Django settings.
