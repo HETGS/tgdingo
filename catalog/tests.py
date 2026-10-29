@@ -66,7 +66,7 @@ class FakeQuerySet:
 
 class SpectralPlotUnitTests(SimpleTestCase):
     def test_setup_spectra_caches_pha_and_arf_loading(self):
-        from catalog import views
+        from catalog.utils import specta
 
         spectra = [
             SimpleNamespace(
@@ -78,15 +78,15 @@ class SpectralPlotUnitTests(SimpleTestCase):
                 set_response=MagicMock(),
             ),
         ]
-        views._setup_spectra.cache_clear()
+        specta.load_spectra.cache_clear()
         try:
             with (
-                patch("catalog.views.FileRecord.objects.filter") as filter_files,
-                patch("catalog.views.read_pha", return_value=spectra) as read_pha,
+                patch("catalog.utils.specta.FileRecord.objects.filter") as filter_files,
+                patch("catalog.utils.specta.read_pha", return_value=spectra) as read_pha,
                 patch(
-                    "catalog.views.read_arf", side_effect=lambda path: path
+                    "catalog.utils.specta.read_arf", side_effect=lambda path: path
                 ) as read_arf,
-                patch("catalog.views._file_record_path") as file_path,
+                patch("catalog.utils.specta.file_record_path") as file_path,
             ):
                 file_rows = filter_files.return_value.filter.return_value.filter.return_value.exclude.return_value.exclude.return_value.exclude.return_value.order_by.return_value
                 file_rows.first.return_value = SimpleNamespace(
@@ -95,8 +95,8 @@ class SpectralPlotUnitTests(SimpleTestCase):
                 file_path.side_effect = lambda tgcat_id, kind, value, arc: (
                     f"/data/{kind}/tgcid_{tgcat_id}_{value}"
                 )
-                first_result = views._setup_spectra(2459)
-                second_result = views._setup_spectra(2459)
+                first_result = specta.load_spectra(2459)
+                second_result = specta.load_spectra(2459)
 
             self.assertIs(first_result, second_result)
             read_pha.assert_called_once()
@@ -104,10 +104,10 @@ class SpectralPlotUnitTests(SimpleTestCase):
             self.assertEqual(spectra[0].set_response.call_count, 8)
             self.assertEqual(spectra[1].set_response.call_count, 8)
         finally:
-            views._setup_spectra.cache_clear()
+            specta.load_spectra.cache_clear()
 
     def test_renderer_rejects_untrusted_grouping_arguments_before_database_access(self):
-        from catalog.views import _render_spectral_plot_html
+        from catalog.utils.specta import render_spectral_plot_html
 
         invalid_arguments = (
             ("group_counts", 0),
@@ -116,18 +116,16 @@ class SpectralPlotUnitTests(SimpleTestCase):
             ("group_snr", float("inf")),
             ("unknown_grouping", 1),
         )
-        with patch("catalog.views.Observation.objects.filter") as mock_filter:
+        with patch("catalog.utils.specta.Observation.objects.filter") as mock_filter:
             for method, value in invalid_arguments:
                 with self.subTest(method=method, value=value):
                     with self.assertRaises(ValueError):
-                        _render_spectral_plot_html(
-                            123, "wavelength", method, value
-                        )
+                        render_spectral_plot_html(123, "wavelength", method, value)
 
         mock_filter.assert_not_called()
 
     def test_reset_sherpa_bokeh_whisker_colors_matches_line(self):
-        from catalog import views
+        from catalog.utils import bokeh_utils
 
         class TeeHead:
             def __init__(self):
@@ -159,7 +157,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
             right=(),
         )
 
-        views._reset_sherpa_bokeh_whisker_colors(figure)
+        bokeh_utils.reset_sherpa_bokeh_whisker_colors(figure)
 
         self.assertEqual(first_whisker.line_color, "red")
         self.assertEqual(first_whisker.upper_head.line_color, "red")
@@ -169,7 +167,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
         self.assertEqual(second_whisker.lower_head.line_color, "blue")
 
     def test_collect_sherpa_bokeh_whisker_renderers_finds_nested_whiskers(self):
-        from catalog import views
+        from catalog.utils import bokeh_utils
 
         class Whisker:
             pass
@@ -186,12 +184,12 @@ class SpectralPlotUnitTests(SimpleTestCase):
         )
 
         self.assertEqual(
-            views._collect_sherpa_bokeh_whisker_renderers(figure),
+            bokeh_utils.collect_sherpa_bokeh_whisker_renderers(figure),
             [whisker_renderer],
         )
 
     def test_collect_plot_renderers_includes_direct_and_nested_renderers(self):
-        from catalog import views
+        from catalog.utils import bokeh_utils
 
         class FakeGlyphRenderer:
             def __init__(self):
@@ -209,19 +207,19 @@ class SpectralPlotUnitTests(SimpleTestCase):
         )
 
         self.assertEqual(
-            views._collect_plot_renderers(figure),
+            bokeh_utils.collect_plot_renderers(figure),
             [direct_renderer, nested_renderer],
         )
 
-    @patch("catalog.views.components", return_value=("<div>", "<script></script>"))
-    @patch("catalog.views.sherpa_plot.set_backend")
-    @patch("catalog.views.DataPHAPlot")
-    @patch("catalog.views._setup_spectra")
+    @patch("catalog.utils.specta.components", return_value=("<div>", "<script></script>"))
+    @patch("catalog.utils.specta.sherpa_plot.set_backend")
+    @patch("catalog.utils.specta.DataPHAPlot")
+    @patch("catalog.utils.specta.load_spectra")
     @patch("catalog.views.Observation.objects.filter")
     def test_plot_overlays_each_spectrum_with_its_matching_responses(
         self,
         mock_observation_filter,
-        mock_setup_spectra,
+        mock_load_spectra,
         mock_plot_class,
         mock_set_backend,
         mock_components,
@@ -241,10 +239,11 @@ class SpectralPlotUnitTests(SimpleTestCase):
         mock_observation_filter.return_value.filter.return_value.first.return_value = (
             SimpleNamespace(id=123, obsid=873, obi=1, srcid=1)
         )
-        mock_setup_spectra.return_value = [first_spectrum, second_spectrum]
+        mock_load_spectra.return_value = [first_spectrum, second_spectrum]
         mock_plot = mock_plot_class.return_value
 
         from catalog import views
+        from catalog.utils import specta
 
         bokeh_figure = SimpleNamespace(
             width=None,
@@ -265,26 +264,24 @@ class SpectralPlotUnitTests(SimpleTestCase):
         backend_figure = SimpleNamespace(children=[(bokeh_figure, 0, 0)])
         with (
             patch.object(
-                views.sherpa_plot.backend,
+                specta.sherpa_plot.backend,
                 "current_fig",
                 backend_figure,
                 create=True,
             ),
-            patch.object(views, "_obsid_has_multiple_obi", return_value=True),
-            patch.object(views, "LegendItem") as mock_legend_item,
-            patch.object(views, "Legend", return_value=legend) as mock_legend,
+            patch("catalog.utils.utils.obsid_has_multiple_obi", return_value=True),
+            patch.object(specta, "LegendItem") as mock_legend_item,
+            patch.object(specta, "Legend", return_value=legend) as mock_legend,
             patch.object(views.Source.objects, "filter") as source_filter,
         ):
             source_filter.return_value.first.return_value = SimpleNamespace(
                 source_name="CAPELLA"
             )
-            result = views._render_spectral_plot_html(
-                123, "channel", "group_counts", 8
-            )
+            result = views.render_spectral_plot_html(123, "channel", "group_counts", 8)
 
         self.assertIn("<div>", result)
         self.assertIn("<script", result)
-        mock_setup_spectra.assert_called_once_with(123)
+        mock_load_spectra.assert_called_once_with(123)
         self.assertEqual(bokeh_figure.width, 960)
         self.assertEqual(bokeh_figure.height, 540)
         self.assertIsNone(bokeh_figure.sizing_mode)
@@ -338,7 +335,7 @@ class SpectralPlotUnitTests(SimpleTestCase):
 
 
 class PlotSelectionViewTests(SimpleTestCase):
-    @patch("catalog.views._render_spectral_plot_html", return_value="<plot>")
+    @patch("catalog.views.render_spectral_plot_html", return_value="<plot>")
     @patch("catalog.views.Source.objects.filter")
     @patch("catalog.views.Observation.objects.filter")
     def test_replot_form_defaults_to_wavelength_and_posts_selected_mode(
@@ -356,10 +353,14 @@ class PlotSelectionViewTests(SimpleTestCase):
         self.assertContains(get_response, "Selected: ObsID: 873 (CAPELLA)")
         self.assertContains(get_response, 'value="wavelength" selected')
         self.assertContains(get_response, 'name="group_value"')
+        self.assertContains(get_response, 'name="add_plus_minus_orders"')
+        self.assertContains(get_response, 'name="add_heg_meg"')
         self.assertNotContains(get_response, 'name="num"')
         self.assertNotContains(get_response, 'name="min"')
         self.assertNotContains(get_response, 'name="snr"')
-        mock_render_plot.assert_called_once_with(42, "wavelength", None, None)
+        mock_render_plot.assert_called_once_with(
+            42, "wavelength", None, None, add_plus_minus_orders=False, add_heg_meg=False
+        )
 
         post_response = self.client.post(
             "/plot-spectrum/", {"tgcat_ids": "42", "analysis": "energy"}
@@ -369,8 +370,22 @@ class PlotSelectionViewTests(SimpleTestCase):
         self.assertEqual(
             mock_render_plot.call_args_list,
             [
-                call(42, "wavelength", None, None),
-                call(42, "energy", None, None),
+                call(
+                    42,
+                    "wavelength",
+                    None,
+                    None,
+                    add_plus_minus_orders=False,
+                    add_heg_meg=False,
+                ),
+                call(
+                    42,
+                    "energy",
+                    None,
+                    None,
+                    add_plus_minus_orders=False,
+                    add_heg_meg=False,
+                ),
             ],
         )
 
@@ -381,10 +396,18 @@ class PlotSelectionViewTests(SimpleTestCase):
                 "analysis": "channel",
                 "grouping_method": "group_snr",
                 "group_value": "0.75",
+                "add_heg_meg": "on",
             },
         )
         self.assertEqual(grouped_response.status_code, 200)
-        mock_render_plot.assert_called_with(42, "channel", "group_snr", 0.75)
+        mock_render_plot.assert_called_with(
+            42,
+            "channel",
+            "group_snr",
+            0.75,
+            add_plus_minus_orders=True,
+            add_heg_meg=True,
+        )
 
         call_count = mock_render_plot.call_count
         invalid_response = self.client.post(
@@ -407,7 +430,14 @@ class PlotSelectionViewTests(SimpleTestCase):
         self.assertEqual(multi_response.status_code, 200)
         self.assertContains(multi_response, 'name="tgcat_ids" value="42"')
         self.assertContains(multi_response, 'name="tgcat_ids" value="43"')
-        mock_render_plot.assert_called_with([42, 43], "channel", None, None)
+        mock_render_plot.assert_called_with(
+            [42, 43],
+            "channel",
+            None,
+            None,
+            add_plus_minus_orders=False,
+            add_heg_meg=False,
+        )
 
 
 class GroupingFormTests(SimpleTestCase):
@@ -447,6 +477,12 @@ class GroupingFormTests(SimpleTestCase):
         )
         self.assertFalse(form.is_valid())
         self.assertIn("group_value", form.errors)
+
+    def test_heg_meg_checkbox_enables_plus_minus_orders(self):
+        form = PlotSelectionForm({"analysis": "wavelength", "add_heg_meg": True})
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertTrue(form.cleaned_data["add_heg_meg"])
+        self.assertTrue(form.cleaned_data["add_plus_minus_orders"])
 
 
 class CatalogSmokeTests(TestCase):
@@ -548,7 +584,7 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "CASTOR")
 
     @patch(
-        "catalog.views._render_spectral_plot_html", return_value="<div>Bokeh plot</div>"
+        "catalog.views.render_spectral_plot_html", return_value="<div>Bokeh plot</div>"
     )
     @patch("catalog.views.FileRecord.objects.filter")
     @patch("catalog.views.Source.objects.filter")
@@ -589,7 +625,14 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, "Bokeh plot")
         self.assertContains(response, "Selected: ObsID: 873 (CAPELLA)")
         self.assertContains(response, 'value="wavelength" selected')
-        mock_render_plot.assert_called_once_with(42, "wavelength", None, None)
+        mock_render_plot.assert_called_once_with(
+            42,
+            "wavelength",
+            None,
+            None,
+            add_plus_minus_orders=False,
+            add_heg_meg=False,
+        )
 
         response = self.client.post(
             reverse("catalog:plot_spectrum"),
@@ -600,7 +643,24 @@ class CatalogSmokeTests(TestCase):
         self.assertContains(response, 'value="channel" selected')
         self.assertEqual(
             mock_render_plot.call_args_list,
-            [call(42, "wavelength", None, None), call(42, "channel", None, None)],
+            [
+                call(
+                    42,
+                    "wavelength",
+                    None,
+                    None,
+                    add_plus_minus_orders=False,
+                    add_heg_meg=False,
+                ),
+                call(
+                    42,
+                    "channel",
+                    None,
+                    None,
+                    add_plus_minus_orders=False,
+                    add_heg_meg=False,
+                ),
+            ],
         )
 
     @patch("catalog.views.Source.objects.filter")
@@ -911,7 +971,7 @@ class CatalogSmokeTests(TestCase):
                 ),
             ]
 
-            with patch("catalog.views.DATA_FILE_ROOT", new=data_root):
+            with patch("django.conf.settings.DATA_FILE_ROOT", new=data_root):
                 response = self.client.post(
                     reverse("catalog:download_selection") + "?obsids=10",
                     {"categories": ["ARF, RMF, PHA2", "light curves"]},

@@ -64,9 +64,14 @@ class PlotSelectionForm(forms.Form):
         required=False,
         widget=forms.NumberInput(attrs={"min": "0", "step": "any", "id": "group-value"}),
     )
+    add_plus_minus_orders = forms.BooleanField(required=False, initial=False)
+    add_heg_meg = forms.BooleanField(required=False, initial=False)
 
     def clean(self):
         cleaned_data = super().clean()
+        if cleaned_data.get("add_heg_meg"):
+            cleaned_data["add_plus_minus_orders"] = True
+
         method = cleaned_data.get("grouping_method")
         parameter = GROUPING_PARAMETER.get(method)
         if parameter is None:

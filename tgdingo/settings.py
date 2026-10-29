@@ -118,15 +118,12 @@ STATICFILES_DIRS = [BASE_DIR / "static"]
 
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-DATA_FILE_ROOT = Path(
-    os.environ.get(
-        "TGDINGO_DATA_ROOT",
-        "/Users/guenther/data/tg_test_data",
+if "TGDINGO_DATA_ROOT" not in os.environ:
+    raise ImproperlyConfigured("Environment variable 'TGDINGO_DATA_ROOT' is required.")
+if "TGDINGO_PREVIEW_IMAGE_ROOT" not in os.environ:
+    raise ImproperlyConfigured(
+        "Environment variable 'TGDINGO_PREVIEW_IMAGE_ROOT' is required."
     )
-)
-PREVIEW_IMAGE_ROOT = Path(
-    os.environ.get(
-        "TGDINGO_PREVIEW_IMAGE_ROOT",
-        "/Users/guenther/data/tg_test_data/png",
-    )
-)
+
+DATA_FILE_ROOT = Path(os.environ["TGDINGO_DATA_ROOT"])
+PREVIEW_IMAGE_ROOT = Path(os.environ["TGDINGO_PREVIEW_IMAGE_ROOT"])

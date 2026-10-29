@@ -11,4 +11,30 @@ tgcid_3299_lc_bg.gz
 tgcid_4038_lc.gz
 tgcid_2772_lc_bg.gz
 
+test with OBIs
+test with observations that have multiple sources
+Search for exact source (not radius?) - just make radius small. Docs.
+More docs.
+favicon. Logos.
+Spacing of panels. A few might do better with other margins.
+Overview plot (clickable?) with all obs in the sky.
+Overview statistics (number obsids, sources, what else?)
+Plot options. Unfolding, naive or otherwise.
+Co-adding.
+license
+tar file instead of zip file?
+mode bokeh mouse over to read of values?
 
+more help for setting up the environment and dependencies
+rename everything (ENVVAR, FIELDS, repro) from tgdingo->tgcat?
+
+Database and copying
+-----------------------
+Don't need thumbnails any more. They are too small to be useful on moderns screen. Doesn't hurt obviously, except for number of files.
+Only transfer REJECT='N' observations.
+
+Database user is read only
+
+How do we log downloads or users?
+
+TGDINGO user is read only for file system (except for logging).

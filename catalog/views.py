@@ -1,7 +1,4 @@
-import copy
-import functools
 import io
-import os
 import re
 import zipfile
 from pathlib import Path
@@ -10,37 +7,22 @@ from urllib.parse import quote_plus
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.coordinates.name_resolve import NameResolveError
-from bokeh.embed import components
-from bokeh.layouts import column, row
-from bokeh.models import Checkbox, CustomJS, Legend, LegendItem, Select
-from bokeh.resources import CDN
 from django.conf import settings
 from django.db import DatabaseError
 from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import render
 
-from .forms import GROUPING_PARAMETER, PlotSelectionForm, validate_grouping
-from sherpa.astro.io import read_arf, read_pha
-from sherpa.astro.plot import DataPHAPlot
-import sherpa.plot as sherpa_plot
-from sherpa.stats import Chi2Gehrels
+PREVIEW_IMAGE_ROOT = settings.PREVIEW_IMAGE_ROOT
 
+from .forms import GROUPING_PARAMETER, PlotSelectionForm
 from .models import FileRecord, Observation, Source
+from .utils.specta import render_spectral_plot_html
+from .utils.utils import (
+    file_record_path,
+    obsid_has_multiple_obi,
+    selected_observation_display_name,
+)
 
-DATA_FILE_ROOT = Path(
-    getattr(
-        settings,
-        "DATA_FILE_ROOT",
-        os.environ.get("TGDINGO_DATA_ROOT", "./data"),
-    )
-)
-PREVIEW_IMAGE_ROOT = Path(
-    getattr(
-        settings,
-        "PREVIEW_IMAGE_ROOT",
-        os.environ.get("TGDINGO_PREVIEW_IMAGE_ROOT", "./data/png"),
-    )
-)
 DOWNLOAD_DATA_OPTIONS = {
     "ARF, RMF, PHA2": [["arf", "rmf", "pha2"], True],
     "PHA Type 1": [["pha1"], False],
@@ -49,9 +31,9 @@ DOWNLOAD_DATA_OPTIONS = {
     "obspar": [["obspar"], False],
     "Event files (evt2)": [["evt2"], False],
 }
-TG_PART = {1: "HEG", 2: "MEG", 3: "LEG"}
+
 PLOT_ANALYSIS_MODES = ("wavelength", "channel", "energy")
-IMAGE_LABLES = {
+IMAGE_LABELS = {
     "summary_flux_overview": "Overview spectrum",
     "summary_im-b": "Image and orientation",
     "summary_im-a": "Image around 0th order",
@@ -65,219 +47,6 @@ IMAGE_LABLES = {
     "summary_spc-2": "Grating spectrum (page 3)",
     "summary_spc-3": "Grating spectrum (page 4)",
 }
-
-def _reset_sherpa_bokeh_whisker_colors(figure):
-    """Reset Bokeh whiskers to the color of the matching plotted line.
-
-    TEMPORARY WORKAROUND: Sherpa currently creates Bokeh ``Whisker`` objects
-    with their default styling instead of inheriting the plotted line color.
-    In the live Bokeh figure, the whiskers live in the figure layout while the
-    line renderers are in the main renderer list. Match each whisker to the line
-    with the same series order so overplotted datasets keep their own colors.
-    Remove this once the upstream Sherpa bug is fixed.
-    """
-
-    def _apply_whisker_color(whisker, color):
-        whisker.line_color = color
-        if hasattr(whisker, "line_alpha"):
-            whisker.line_alpha = getattr(whisker, "line_alpha", 1)
-
-        alpha = getattr(whisker, "line_alpha", 1)
-        for head in (
-            getattr(whisker, "upper_head", None),
-            getattr(whisker, "lower_head", None),
-        ):
-            if head is None:
-                continue
-            if hasattr(head, "line_color"):
-                head.line_color = color
-            if hasattr(head, "fill_color"):
-                head.fill_color = color
-            if hasattr(head, "line_alpha"):
-                head.line_alpha = alpha
-            if hasattr(head, "fill_alpha"):
-                head.fill_alpha = alpha
-
-    line_colors = []
-    for renderer in getattr(figure, "renderers", ()):
-        glyph = getattr(renderer, "glyph", None)
-        if glyph is None:
-            continue
-        color = getattr(glyph, "line_color", None) or getattr(glyph, "fill_color", None)
-        if color:
-            line_colors.append(color)
-
-    whiskers = []
-    for container in (
-        getattr(figure, "center", ()),
-        getattr(figure, "above", ()),
-        getattr(figure, "below", ()),
-        getattr(figure, "left", ()),
-        getattr(figure, "right", ()),
-    ):
-        for item in container:
-            if type(item).__name__ == "Whisker":
-                whiskers.append(item)
-                continue
-            glyph = getattr(item, "glyph", None)
-            if glyph is not None and type(glyph).__name__ == "Whisker":
-                whiskers.append(glyph)
-
-    if not whiskers or not line_colors:
-        return
-
-    for index, whisker in enumerate(whiskers):
-        color = line_colors[index] if index < len(line_colors) else line_colors[-1]
-        _apply_whisker_color(whisker, color)
-
-
-def _collect_sherpa_bokeh_whisker_renderers(figure):
-    """Collect the Bokeh whisker renderers from a Sherpa-generated figure.
-
-    The whiskers can live in the figure layout containers rather than the main
-    renderer list, especially when multiple datasets are overplotted and when
-    Bokeh nests the glyphs in layout children. This helper is intentionally kept
-    separate so the interactive checkbox can target all whiskers in one go.
-    """
-    whiskers = []
-
-    def _walk(node):
-        if node is None:
-            return
-        if isinstance(node, (list, tuple)):
-            for item in node:
-                _walk(item)
-            return
-
-        if type(node).__name__ == "Whisker":
-            whiskers.append(node)
-            return
-
-        glyph = getattr(node, "glyph", None)
-        if glyph is not None and type(glyph).__name__ == "Whisker":
-            whiskers.append(node)
-
-        for attr in ("center", "above", "below", "left", "right", "children"):
-            child = getattr(node, attr, None)
-            if child is not None:
-                _walk(child)
-
-    _walk(figure)
-    return whiskers
-
-
-def _collect_plot_renderers(figure):
-    """Collect the renderers used for plotted data, including nested figure layout children.
-
-    The Sherpa-generated Bokeh figure can include renderers directly on the figure
-    object or nested under layout containers, so we gather both forms before wiring
-    custom JavaScript callbacks.
-    """
-    plot_renderers = []
-    seen = set()
-
-    def _walk(node):
-        if node is None:
-            return
-        if isinstance(node, (list, tuple)):
-            for item in node:
-                _walk(item)
-            return
-
-        if hasattr(node, "data_source") and getattr(node, "data_source", None) is not None:
-            renderer_id = id(node)
-            if renderer_id not in seen:
-                seen.add(renderer_id)
-                plot_renderers.append(node)
-
-        for attr in ("renderers", "center", "above", "below", "left", "right", "children"):
-            child = getattr(node, attr, None)
-            if child is not None:
-                _walk(child)
-
-    _walk(figure)
-    return plot_renderers
-
-
-def _link_whisker_muting(line_renderers, whiskers):
-    """Make error bars follow their line when it is muted via the legend.
-
-    Bokeh's ``Whisker`` has no ``muted`` state and cannot be part of a
-    ``LegendItem``, so clicking the legend (``click_policy="mute"``) only fades
-    the line. This callback fades the whiskers of the same dataset to the same
-    alpha Bokeh uses for muted lines (``muted_alpha`` default, 0.2) and restores
-    their original alpha when the line is un-muted.
-    """
-    callback = CustomJS(
-        args={"whiskers": whiskers},
-        code="""
-            const muted = cb_obj.muted;
-            for (const whisker of whiskers) {
-                for (const obj of [whisker, whisker.upper_head, whisker.lower_head]) {
-                    if (!obj) continue;
-                    if (obj.__tg_alpha === undefined) obj.__tg_alpha = obj.line_alpha;
-                    obj.line_alpha = muted ? 0.2 : obj.__tg_alpha;
-                }
-                // Head (tee) property changes alone do not trigger a redraw.
-                whisker.change.emit();
-            }
-        """,
-    )
-    for line_renderer in line_renderers:
-        line_renderer.js_on_change("muted", callback)
-
-
-def _make_y_unit_select(y_axis, y_sources, y_exposures, y_label):
-    """Build the "Y unit" dropdown that rescales the y data in the browser.
-
-    Options: "sec" (as plotted, a rate per second), "ks" (rate per kilosecond,
-    values x1000) and "exposure" (values x exposure time, i.e. plain counts,
-    with the time unit dropped from the axis label).
-
-    ``y_sources`` are all ColumnDataSources holding y values (lines and error
-    bars); ``y_exposures`` holds the exposure in seconds of the spectrum that
-    each source belongs to. The original columns are cached in the browser so
-    switching back and forth never accumulates rounding errors.
-    """
-    select = Select(title="time:", value="sec", options=["sec", "ks", "exposure"])
-    select.js_on_change(
-        "value",
-        CustomJS(
-            args={
-                "axis": y_axis,
-                "sources": y_sources,
-                "exposures": [float(exposure) for exposure in y_exposures],
-                "base_y_label": y_label,
-            },
-            code="""
-                const unit = cb_obj.value;
-                if (unit === 'ks') {
-                    axis.axis_label = base_y_label.replace(/sec/g, 'ks');
-                } else if (unit === 'exposure') {
-                    axis.axis_label = base_y_label.replace(/\\/sec/g, '');
-                } else {
-                    axis.axis_label = base_y_label;
-                }
-
-                // Columns arrive in the browser as typed arrays, not Arrays.
-                sources.forEach((source, i) => {
-                    const scale = (unit === 'ks') ? 1000
-                        : (unit === 'exposure') ? exposures[i] : 1;
-                    if (!source.__tg_orig_y) source.__tg_orig_y = {};
-                    const orig = source.__tg_orig_y;
-                    const new_data = Object.assign({}, source.data);
-                    for (const key of ['y', 'lower', 'upper']) {
-                        const col = source.data[key];
-                        if (col == null || typeof col.length !== 'number') continue;
-                        if (!(key in orig)) orig[key] = Float64Array.from(col);
-                        new_data[key] = orig[key].map((v) => v * scale);
-                    }
-                    source.data = new_data;
-                });
-            """,
-        ),
-    )
-    return select
 
 
 def _parse_coordinate(value):
@@ -340,23 +109,9 @@ def _observation_detail_slug(obsid, obi=None, obsid_counts=None):
     """Return the canonical observation detail URL slug for a row."""
     if obsid is None:
         return ""
-    if obsid_counts is not None and obsid_counts.get(obsid, 0) > 1:
-        if obi is not None:
-            return f"{obsid}-{obi}"
+    if obsid_counts is not None and obsid_counts.get(obsid, 0) > 1 and obi is not None:
+        return f"{obsid}-{obi}"
     return str(obsid)
-
-
-def _obsid_has_multiple_obi(obsid):
-    """Return whether a given ObsID has more than one distinct OBI value."""
-    if obsid is None:
-        return False
-    obi_values = set(
-        Observation.objects.filter(obsid=obsid)
-        .filter(reject="N")
-        .exclude(obi__isnull=True)
-        .values_list("obi", flat=True)
-    )
-    return len(obi_values) > 1
 
 
 def _observation_result_entries(observations, source=None):
@@ -609,278 +364,6 @@ def _normalized_obsid_list(values):
     return list(dict.fromkeys(selected))
 
 
-def _format_observation_label(observation, source_name):
-    """Format an observation label consistently across the page and plot."""
-    if _obsid_has_multiple_obi(observation.obsid):
-        return f"ObsID: {observation.obsid} (OBI: {observation.obi}, {source_name})"
-    else:
-        return f"ObsID: {observation.obsid} ({source_name})"
-
-
-def _selected_observation_display_name(observation_id):
-    """Return the shared display label for a selected TGCat row."""
-    observation = (
-        Observation.objects.filter(id=observation_id).filter(reject="N").first()
-    )
-    if observation is None:
-        return f"(ObsID: {observation_id}, Unknown)"
-    source = Source.objects.filter(srcid=observation.srcid).first()
-    return _format_observation_label(observation, source.source_name)
-
-
-def _file_record_path(observation_id, file_type, value, arc_name=None):
-    """Return the resolved file path for a TGCat file record."""
-    if not value:
-        return None
-    if not arc_name:
-        arc_name = ""
-    arc_name = str(arc_name or "").strip()
-    candidate = Path(DATA_FILE_ROOT)
-    if arc_name:
-        candidate = candidate / arc_name
-    candidate = candidate / file_type / f"tgcid_{observation_id}_{value}"
-    resolved = candidate.resolve()
-    if resolved.exists() and resolved.is_file():
-        return resolved
-    return None
-
-
-@functools.lru_cache(maxsize=16)
-def _setup_spectra(tgcat_id):
-    """Load the response files associated with a PHA spectrum."""
-    spectra = []
-
-    files = (
-        FileRecord.objects.filter(id=tgcat_id)
-        .filter(name="file")
-        .filter(type="pha2")
-        .exclude(value__isnull=True)
-        .exclude(value="")
-        .exclude(value__icontains="bg")
-        .order_by("arc", "value")
-        .first()
-    )
-    if files is None:
-        raise ValueError(f"No valid PHA2 file found for observation {tgcat_id}.")
-    value = str(getattr(files, "value", "") or "").strip()
-    arc_name = str(getattr(files, "arc", "") or "").strip()
-    path = _file_record_path(tgcat_id, "pha2", value, arc_name)
-    if path is None:
-        raise ValueError(f"PHA2 file is missing for observation {tgcat_id}.")
-
-    phalist = read_pha(str(path))
-
-    for pha in phalist:
-        tg_m = int(pha.header["TG_M"])
-        tg_part = int(pha.header["TG_PART"])
-        if abs(tg_m) > 1:
-            continue
-        if str(pha.header.get("INSTRUME", "")).upper().startswith("HRC"):
-            response_orders = range(-1, -9, -1) if tg_m < 0 else range(1, 9)
-        else:
-            response_orders = (tg_m,)
-        part_name = TG_PART[tg_part]
-
-        for response_index, order in enumerate(response_orders, start=1):
-            # For plotting alone, the RMF is not needed.
-            # On the other hand, those are big files and we save a lot
-            # of time by not loading them, so we only load the ARF here.
-            arf_path = _file_record_path(
-                tgcat_id,
-                "arf",
-                f"{part_name.lower()}_{order}.arf.gz",
-                arc_name,
-            )
-            if arf_path is None:
-                raise ValueError(
-                    f"ARF response is missing for {part_name} order {order} "
-                    f"in TGCat row {tgcat_id}."
-                )
-            arf = read_arf(str(arf_path))
-            pha.set_response(arf, None, id=response_index)
-
-        spectra.append(pha)
-    return spectra
-
-
-def _render_spectral_plot_html(
-    observation_ids, analysis="wavelength", grouping_method=None, grouping_value=None
-):
-    """Render a Bokeh plot for selected TGCat observation rows.
-
-    Notes
-    -----
-    We are still exploring if this approach is fast enough. Here is a thought
-    for significant speed-up:
-    Currently, the pha is read first, and then looping over it, the arf is added
-    as needed for some of the spectra (e.g. not HETG order -3).
-    Instead, one
-    """
-    grouping_method, grouping_value = validate_grouping(grouping_method, grouping_value)
-    if isinstance(observation_ids, int):
-        observation_ids = [observation_ids]
-    observations = []
-    spectra = []
-    for observation_id in observation_ids:
-        observation = (
-            Observation.objects.filter(id=observation_id).filter(reject="N").first()
-        )
-        if observation is None:
-            raise ValueError(f"Observation {observation_id} was not found.")
-        observations.append(observation)
-        spectra.extend(
-            (observation, copy.deepcopy(pha)) for pha in _setup_spectra(observation_id)
-        )
-
-    if not spectra:
-        raise ValueError(
-            "No plottable spectra were found for the selected observations."
-        )
-    for _, pha in spectra:
-        pha.set_analysis(analysis)
-        if grouping_method in GROUPING_PARAMETER:
-            getattr(pha, grouping_method)(grouping_value)
-
-    sherpa_plot.set_backend("BokehBackend")
-    dataplot = DataPHAPlot()
-    legend_items = []
-    rendered_count = 0
-    # source id -> (ColumnDataSource, exposure in s) for all y data in the plot
-    y_source_exposure = {}
-    linked_whisker_ids = set()
-    multi_observation_plot = len(observations) > 1
-    observation_labels = {}
-    for observation in observations:
-        source = (
-            Source.objects.filter(srcid=observation.srcid).first()
-            if getattr(observation, "srcid", None) is not None
-            else None
-        )
-        observation_labels[observation.id] = _format_observation_label(
-            observation, source.source_name
-        )
-    obs_titles = list(dict.fromkeys(observation_labels.values()))
-    plot_title = obs_titles[0] if len(obs_titles) == 1 else ", ".join(obs_titles)
-
-    chi2 = Chi2Gehrels()
-    for i, (observation, pha) in enumerate(spectra):
-        dataplot.prepare(pha, stat=chi2)
-        obs_title = observation_labels[observation.id]
-        part_name = TG_PART.get(int(pha.header["TG_PART"]), "Unknown")
-        tg_m = int(pha.header["TG_M"])
-        dataplot.title = plot_title
-        dataplot.plot(
-            label=(
-                f"{obs_title} {part_name} {tg_m}"
-                if multi_observation_plot
-                else f"{part_name} {tg_m}"
-            ),
-            linestyle="-",
-            marker=None,
-            overplot=i != 0,
-            xerrorbars=True,
-            yerrorbars=True,
-        )
-        # In Sherpa 4.19, the labels set in the plot() call above are not automatically added to the legend,
-        # so we manually add them here.
-        # This can be removed when Sherpa supports this.
-        figure_grid = sherpa_plot.backend.current_fig
-        figure = figure_grid.children[0][0]
-        renderers = figure.renderers[rendered_count:]
-        # TEMPORARY WORKAROUND: Sherpa/Bokeh currently assigns a default color to
-        # the `Whisker` glyphs, so the error bars do not match the plotted line.
-        # Reset the whisker colors here until the Sherpa bug is fixed.
-        _reset_sherpa_bokeh_whisker_colors(figure)
-        rendered_count = len(figure.renderers)
-        dataset_whiskers = [
-            whisker
-            for whisker in _collect_sherpa_bokeh_whisker_renderers(figure)
-            if whisker.id not in linked_whisker_ids
-        ]
-        linked_whisker_ids.update(whisker.id for whisker in dataset_whiskers)
-        if dataset_whiskers:
-            _link_whisker_muting(
-                [r for r in renderers if hasattr(r, "muted")], dataset_whiskers
-            )
-        # Remember which spectrum's exposure belongs to each new data source
-        # (lines: ``data_source``, error bars: ``Whisker.source``).
-        for node in _collect_plot_renderers(figure) + _collect_sherpa_bokeh_whisker_renderers(figure):
-            node_source = getattr(node, "data_source", None) or getattr(node, "source", None)
-            if node_source is not None and node_source.id not in y_source_exposure:
-                y_source_exposure[node_source.id] = (
-                    node_source,
-                    getattr(pha, "exposure", None) or 1.0,
-                )
-        legend_items.append(
-            LegendItem(
-                label=(
-                    f"{obs_title} {part_name} {tg_m}"
-                    if multi_observation_plot
-                    else f"{part_name} {tg_m}"
-                ),
-                renderers=renderers,
-            )
-        )
-        # end manual legend workaround
-
-    # Since the can't control the default Bokeh figure size from Sherpa,
-    # we manually resize the figure here to a rectangular format that should work on most screens.
-    figure_grid = sherpa_plot.backend.current_fig
-    figure = figure_grid.children[0][0]
-    whisker_renderers = []
-    for plotted_figure, _, _ in figure_grid.children:
-        whisker_renderers.extend(_collect_sherpa_bokeh_whisker_renderers(plotted_figure))
-
-    whisker_checkbox = Checkbox(label="Show error bars", active=True)
-    whisker_checkbox.js_on_change(
-        "active",
-        CustomJS(
-            args={"whiskers": whisker_renderers},
-            code="""
-                for (const renderer of whiskers) {
-                    if (!renderer) continue;
-                    if (typeof renderer.visible !== 'undefined') {
-                        renderer.visible = this.active;
-                    }
-                    if (renderer.glyph && typeof renderer.glyph.visible !== 'undefined') {
-                        renderer.glyph.visible = this.active;
-                    }
-                }
-            """,
-        ),
-    )
-    try:
-        y_axis = figure.yaxis[0]
-        y_label = y_axis.axis_label or ""
-    except (AttributeError, IndexError):
-        y_axis, y_label = None, ""
-
-    y_sources = [entry[0] for entry in y_source_exposure.values()]
-    y_exposures = [entry[1] for entry in y_source_exposure.values()]
-    y_unit_select = _make_y_unit_select(y_axis, y_sources, y_exposures, y_label)
-
-    figure_legend = Legend(items=legend_items) if legend_items else None
-    figure.toolbar_location = "above"
-    for rendered_figure, _, _ in figure_grid.children:
-        rendered_figure.width = 960
-        rendered_figure.height = 540
-
-    widget_row = row(whisker_checkbox, y_unit_select)
-    try:
-        plot_layout = column(widget_row, figure)
-        if figure_legend is not None:
-            figure.add_layout(figure_legend, "right")
-            figure.legend.click_policy = "mute"
-    except (TypeError, ValueError):
-        figure.add_layout(whisker_checkbox, "above")
-        if figure_legend is not None:
-            figure.add_layout(figure_legend, "right")
-            figure.legend.click_policy = "mute"
-        plot_layout = figure
-    div, script = components(plot_layout)
-    return f"{CDN.render_css()}{CDN.render_js()}{div}{script}"
-
-
 def _build_download_zip(selected_obsids, selected_categories):
     """Create a zip archive of all matching TGCat files for the selected observations."""
     archive_buffer = io.BytesIO()
@@ -918,7 +401,7 @@ def _build_download_zip(selected_obsids, selected_categories):
 
                     arc_name = str(getattr(row, "arc", "") or "").strip()
                     value_name = str(getattr(row, "value", "") or "").strip()
-                    source_path = _file_record_path(
+                    source_path = file_record_path(
                         observation.id, file_type, value_name, arc_name
                     )
                     if source_path is None:
@@ -946,7 +429,7 @@ def download_selection(request):
     selected_obsids = _normalized_obsid_list(raw_obsids)
 
     selected_obs_labels = [
-        _selected_observation_display_name(obsid) for obsid in selected_obsids
+        selected_observation_display_name(obsid) for obsid in selected_obsids
     ]
 
     if request.method == "POST":
@@ -999,7 +482,7 @@ def plot_selection(request):
     )
     selected_tgcat_ids = _normalized_obsid_list(raw_tgcat_ids)
     selected_obs_labels = [
-        _selected_observation_display_name(tgcat_id) for tgcat_id in selected_tgcat_ids
+        selected_observation_display_name(tgcat_id) for tgcat_id in selected_tgcat_ids
     ]
     is_post = request.method == "POST"
     if is_post:
@@ -1009,7 +492,12 @@ def plot_selection(request):
     else:
         plot_form = PlotSelectionForm(initial={"analysis": "wavelength"})
         form_is_valid = True
-        cleaned_data = {"analysis": "wavelength", "grouping_method": ""}
+        cleaned_data = {
+            "analysis": "wavelength",
+            "grouping_method": "",
+            "add_plus_minus_orders": False,
+            "add_heg_meg": False,
+        }
     analysis = cleaned_data.get("analysis", "wavelength")
 
     plot_html = None
@@ -1018,13 +506,19 @@ def plot_selection(request):
         try:
             grouping_method = cleaned_data.get("grouping_method") or None
             grouping_parameter = GROUPING_PARAMETER.get(grouping_method)
-            plot_html = _render_spectral_plot_html(
+            add_plus_minus_orders = bool(
+                cleaned_data.get("add_plus_minus_orders", False)
+            )
+            add_heg_meg = bool(cleaned_data.get("add_heg_meg", False))
+            plot_html = render_spectral_plot_html(
                 selected_tgcat_ids[0]
                 if len(selected_tgcat_ids) == 1
                 else selected_tgcat_ids,
                 analysis,
                 grouping_method,
                 cleaned_data.get("group_value") if grouping_parameter else None,
+                add_plus_minus_orders=add_plus_minus_orders,
+                add_heg_meg=add_heg_meg,
             )
         except Exception as exc:  # pragma: no cover - runtime-only safeguard
             plot_error = str(exc)
@@ -1112,7 +606,7 @@ def _preview_image_entries_for_observation(observation):
                 ".png"
             )
             thumbnail = f"tgcid_{observation.id}_{name}_thumb.png"
-            label = IMAGE_LABLES.get(name, name)
+            label = IMAGE_LABELS.get(name, name)
             image_rows.append(
                 {"filename": filename, "label": label, "thumbnail": thumbnail}
             )
@@ -1128,7 +622,7 @@ def _preview_images_by_source(obsid, requested_obi=None):
     if requested_obi is not None:
         queryset = queryset.filter(obi=requested_obi)
 
-    show_obi = _obsid_has_multiple_obi(obsid)
+    show_obi = obsid_has_multiple_obi(obsid)
     rows = list(queryset.all())
 
     groups = []
@@ -1210,7 +704,7 @@ def observation_detail(request, obsid_slug):
 
     applicable_tgcat_ids = list(queryset.values_list("id", flat=True))
     source = Source.objects.filter(srcid=observation.srcid).first()
-    show_obi = _obsid_has_multiple_obi(observation.obsid)
+    show_obi = obsid_has_multiple_obi(observation.obsid)
 
     source_label = source.source_name
     source_url = None

@@ -41,6 +41,18 @@
           {{ plot_form.group_value }}
           {{ plot_form.group_value.errors }}
         </div>
+        <div class="plot-control-field checkbox-field">
+          <label for="id_add_plus_minus_orders">
+            {{ plot_form.add_plus_minus_orders }} add +/- orders
+          </label>
+          {{ plot_form.add_plus_minus_orders.errors }}
+        </div>
+        <div class="plot-control-field checkbox-field">
+          <label for="id_add_heg_meg">
+            {{ plot_form.add_heg_meg }} add HEG/MEG
+          </label>
+          {{ plot_form.add_heg_meg.errors }}
+        </div>
         <button type="submit" class="big-button">Replot</button>
       </form>
       {% if plot_form.non_field_errors %}
@@ -90,6 +102,8 @@
       const valueField = plotForm.querySelector("#group-value-field");
       const valueLabel = plotForm.querySelector("#group-value-label");
       const valueInput = plotForm.querySelector("#group-value");
+      const plusMinusOrders = plotForm.querySelector("#id_add_plus_minus_orders");
+      const hegMeg = plotForm.querySelector("#id_add_heg_meg");
       const groupingLabels = {
         group_adapt: "Minimum counts",
         group_adapt_snr: "Minimum SNR",
@@ -110,7 +124,14 @@
         valueInput.setCustomValidity("");
       }
 
+      function syncOrderCheckboxes() {
+        if (hegMeg.checked) {
+          plusMinusOrders.checked = true;
+        }
+      }
+
       methodSelect.addEventListener("change", updateGroupingFields);
+      hegMeg.addEventListener("change", syncOrderCheckboxes);
       valueInput.addEventListener("input", () => {
         const isSnr = methodSelect.value === "group_snr";
         const number = Number(valueInput.value);
